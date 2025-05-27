@@ -1,0 +1,11 @@
+matplotlib
+networkx
+numpy
+pandas
+scipy
+torch
+torch-geometric
+cupy-cuda12x
+scikit-learn
+tqdm
+torchvision
