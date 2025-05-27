@@ -3,6 +3,7 @@ import random
 import time
 import warnings
 from math import log2
+import pycuda.driver as cuda
 
 import matplotlib.pyplot as plt
 import networkx as nx
@@ -263,6 +264,7 @@ def MDS_X(D, V1, V2, W_1, DA, X_a, n_list, n, d):
 
     np.random.seed(50)
     L_D_inv_cp =  cp.asarray(L_D_inv)
+    print(f'Inverse of L_D to be taken of size: {L_D_inv_cp.shape}')
     temp = cp.linalg.pinv(L_D_inv_cp)
     temp =  cp.asnumpy(temp)
     Zu_samples = np.random.multivariate_normal(np.zeros(n + X_a.shape[0]), temp, d).T
@@ -284,9 +286,10 @@ def MDS_X(D, V1, V2, W_1, DA, X_a, n_list, n, d):
         DNA_new.append(client_distances)
 
     epsilon = 1e-3
-    epochs = 2000
+    epochs = 1000
     loss = []
     V1_cp = cp.asarray(V1)
+    print(f"Taking inverse of V of size: {V1_cp.shape}")
     V1_inv = cp.linalg.pinv(V1_cp)
     V1_inv =  cp.asnumpy(V1_inv)
     W_new = np.multiply(W_1, D)
@@ -394,6 +397,15 @@ def check_score(D_true, D_approx,k):
       return avg_f_score
 
 if __name__ == "__main__":
+    torch.cuda.empty_cache()
+    for i in range(cuda.Device.count()):
+        dev = cuda.Device(i)
+        ctx = dev.make_context()
+        free, total = cuda.mem_get_info()
+        print(f"Device {i}: {dev.name()} | Free: {free // (1024**2)} MB / Total: {total // (1024**2)} MB")
+        ctx.pop()
+    
+    cp.cuda.runtime.setDevice(1)
 
     parser = argparse.ArgumentParser(description='Run t-SNE with random search hyperparameters.')
     parser.add_argument('--max_iter', type=int, default=1000, help='Maximum number of iterations.')
@@ -468,7 +480,10 @@ if __name__ == "__main__":
     #profiler = LineProfiler()
     #profiler.add_function(MDS_X)
     #profiler.enable()
+    time1 = time.time()
     X_final, loss = MDS_X(D, V1, V2, W_1, DA, X_a, n_sizes, n, d)
+    time1f = time.time()
+    print(f"Time taken on {args.dataset_name}: {time1f-time1} secs")
     #profiler.disable()
     np.save(output_directory + "X_final " + dataset_name + ".npy", X_final)
     print("Calculating the distance error between X_na and X_final of shapes", X_na.shape, X_final.shape, "X_na looks like", X_na, "X_final looks like", X_final)
