@@ -4,6 +4,10 @@ import time
 import warnings
 from math import log2
 import pycuda.driver as cuda
+import os
+from ugc_f import ugc
+import torch.nn.functional as F
+from torch_geometric.utils import to_dense_adj, dense_to_sparse
 
 import matplotlib.pyplot as plt
 import networkx as nx
@@ -447,6 +451,20 @@ if __name__ == "__main__":
     test_features = []
     test_labels = []
 
+    ## UGC
+    for i, data in enumerate(train_data):
+        num_nodes = data.x.shape[0]
+        if num_nodes < 100: continue
+        C, zero_list = ugc(data, 0.1, i)
+        train_data[i].x = C.T @ train_data[i].x
+        y_oh = F.one_hot(data.y)
+        newY = torch.argmax(C.T.to(y_oh.dtype) @ y_oh, dim=1).to(data.y.dtype)
+        train_data[i].y = newY
+        train_data[i].test_mask = zero_list
+        train_data[i].edge_index = dense_to_sparse(C.T @ to_dense_adj(data.edge_index, max_num_nodes=num_nodes)[0] @ C)[0].to(torch.int64)
+    print(train_data)
+
+
     for i in range(10):
         train_features.append(train_data[i].x.numpy())
         train_labels.append(train_data[i].y.numpy())
@@ -485,7 +503,9 @@ if __name__ == "__main__":
     time1f = time.time()
     print(f"Time taken on {args.dataset_name}: {time1f-time1} secs")
     #profiler.disable()
-    np.save(output_directory + "X_final " + dataset_name + ".npy", X_final)
+    os.makedirs(output_directory, exist_ok=True)
+
+    np.save(output_directory + f"X_final_{dataset_name}.npy", X_final)
     print("Calculating the distance error between X_na and X_final of shapes", X_na.shape, X_final.shape, "X_na looks like", X_na, "X_final looks like", X_final)
     error, D_true, D_esti, z_true, z_esti = dist_error(X_na.astype('float'), X_final)
     np.save(output_directory + "D_esti_" + dataset_name + "_.npy", D_esti)
