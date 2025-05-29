@@ -462,7 +462,6 @@ if __name__ == "__main__":
         train_data[i].y = newY
         train_data[i].test_mask = zero_list
         train_data[i].edge_index = dense_to_sparse(C.T @ to_dense_adj(data.edge_index, max_num_nodes=num_nodes)[0] @ C)[0].to(torch.int64)
-    print(train_data)
 
 
     for i in range(10):
