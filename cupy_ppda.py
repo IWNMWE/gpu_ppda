@@ -451,6 +451,7 @@ if __name__ == "__main__":
     test_features = []
     test_labels = []
 
+
     ## UGC
     for i, data in enumerate(train_data):
         num_nodes = data.x.shape[0]
@@ -462,6 +463,18 @@ if __name__ == "__main__":
         train_data[i].y = newY
         train_data[i].test_mask = zero_list
         train_data[i].edge_index = dense_to_sparse(C.T @ to_dense_adj(data.edge_index, max_num_nodes=num_nodes)[0] @ C)[0].to(torch.int64)
+
+    n = 0
+    l = [0]
+    for dataset in train_data:
+        n += dataset.x.shape[0]
+        l.append(n)
+    C = np.zeros((n, len(train_data)))
+    print(n)
+    for i in range(len(l) - 1):
+        C[l[i]:l[i+1], i] = 1
+    
+    np.save(f'{data_directory}C_new.npy', C)
 
 
     for i in range(10):
@@ -475,6 +488,8 @@ if __name__ == "__main__":
 
     X_a = test_data.x.numpy()
     X_na = np.concatenate([train_features[i] for i in range(len(train_features))], axis=0)
+
+    print(X_a.shape, X_na.shape)
 
     m = X_a.shape[0]
     n = X_na.shape[0]

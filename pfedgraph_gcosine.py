@@ -81,6 +81,7 @@ def local_train_pfedgraph(args, round, nets_this_round, cluster_models, datasets
 
 args, cfg = get_args()
 print(args)
+exit(1)
 seed = args.init_seed
 np.random.seed(seed)
 torch.manual_seed(seed)
