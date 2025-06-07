@@ -8,7 +8,7 @@ from torch_geometric.datasets import PPI
 from torch_geometric.loader import DataLoader
 import attridict
 
-def partition_graph(dataset : str, partition, n_parties, distribution_type = "average", iid_beta = 0.5):
+def partition_graph(dataset : str, partition, n_parties, distribution_type = "average", iid_beta = 0.5, anchors=100):
         
     if partition == 'noniid' and dataset in ('cora', 'pubmed', 'citeseer'):
 
@@ -25,7 +25,7 @@ def partition_graph(dataset : str, partition, n_parties, distribution_type = "av
             "num_hops": 1,
             # Dataset Handling Options
             "use_huggingface": False,  # Load dataset directly from Hugging Face Hub
-            "num_nodes_to_remove" : 100
+            "num_nodes_to_remove" : anchors,  # Number of nodes to remove for anchor selection
         }
 
         config = attridict(config)

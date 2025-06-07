@@ -81,7 +81,6 @@ def local_train_pfedgraph(args, round, nets_this_round, cluster_models, datasets
 
 args, cfg = get_args()
 print(args)
-exit(1)
 seed = args.init_seed
 np.random.seed(seed)
 torch.manual_seed(seed)
@@ -131,7 +130,7 @@ cluster_model_vectors = {}
 
 if args.ppda:
     distance_matrix = np.load(args.load_graph_path + "D_esti.npy")
-    assignement_matrix = np.load(args.load_graph_path + "C.npy")
+    assignement_matrix = np.load(args.load_graph_path + "C_new_500.npy")
     graph_matrix = gen_graph_matrix(distance_matrix, assignement_matrix)
 
 for round in range(cfg["comm_round"]):
