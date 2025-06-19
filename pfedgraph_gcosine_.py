@@ -130,8 +130,9 @@ def test_accuracy_pfed(C_dir, D_dir):
     cluster_model_vectors = {}
 
     if args.ppda:
-        distance_matrix = np.load(args.load_graph_path + "D_esti.npy")
-        assignement_matrix = np.load(args.load_graph_path + "C_new_500.npy")
+        distance_matrix = D_dir
+        assignement_matrix = C_dir
+        print(C_dir.shape)
         graph_matrix = gen_graph_matrix(distance_matrix, assignement_matrix)
 
     for round in range(cfg["comm_round"]):

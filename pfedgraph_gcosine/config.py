@@ -3,6 +3,8 @@ import os
 
 def get_args():
     parser = argparse.ArgumentParser()
+    parser.add_argument('--dataset_name', type=str, default='cora',help='Name of the dataset to load (BRCA or MNIST).')
+    parser.add_argument('--data_directory', type=str, default='./data/cora/', help='Directory where dataset files are located.')
     parser.add_argument('--gpu', type=str, default="1")
     parser.add_argument('--model', type=str, default='gcn', help='neural network used in training')
     parser.add_argument('--dataset', type=str, default='cora', help='dataset used for training')
@@ -27,7 +29,7 @@ def get_args():
     parser.add_argument('--weight_norm', type=str, default='relu', choices=['sum', 'softmax', 'abs', 'relu', 'sigmoid'], help='How to measure the model difference')
     parser.add_argument('--difference_measure', type=str, default='all', help='How to measure the model difference')
     
-    parser.add_argument('--load_graph_path', type=str, default=None, help='The path to load the graph')
+    parser.add_argument('--load_graph_path', type=str, default='./data/cora/', help='The path to load the graph')
     parser.add_argument('--alpha', type=float, default=0.8, help='Hyper-parameter to avoid concentration')
     parser.add_argument('--lam', type=float, default=0.01, help="Hyper-parameter in the objective")
     parser.add_argument('--ppda', type=bool, default=True, help='Whether to use PPDA')

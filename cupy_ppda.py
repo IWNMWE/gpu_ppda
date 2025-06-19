@@ -445,118 +445,118 @@ if __name__ == "__main__":
     #train_data, test_data = load_data(dataset_name=dataset_name, num_clients=num_clients, test_size=0.2, data_dir=data_directory)
     
     ## If the dataset isn't partitioned 
-    try:
-        file = open(data_directory + "datasets.pkl",'rb')
-    except:
-        store_partition_graph(dataset_name, 0.5, 'noniid', num_clients, "./data/")
+    # try:
+    #     file = open(data_directory + "datasets.pkl",'rb')
+    # except:
+    #     store_partition_graph(dataset_name, 0.5, 'noniid', num_clients, "./data/")
 
-    file = open(data_directory + "datasets.pkl",'rb')
-    train_data = pickle.load(file)
-    file.close()
-    test_data = torch.load(args.data_directory + "val.pt", weights_only=False)
+    # file = open(data_directory + "datasets.pkl",'rb')
+    # train_data = pickle.load(file)
+    # file.close()
+    # test_data = torch.load(args.data_directory + "val.pt", weights_only=False)
 
-    train_features = []
-    train_labels = []
-    test_features = []
-    test_labels = []
+    # train_features = []
+    # train_labels = []
+    # test_features = []
+    # test_labels = []
 
-    feat = 1e5
-    ## UGC
-    for i, data in enumerate(train_data):
-        num_nodes = data.x.shape[0]
-        if num_nodes < 100: continue
-        C, zero_list = ugc(data, 0.1, i)
-        train_data[i].x = C.T @ train_data[i].x
-        # myX = torch.rand(train_data[i].x.shape[0], int(feat))
-        # myX[:,:train_data[i].x.shape[1]] = train_data[i].x
-        # train_data[i].x = myX
-        y_oh = F.one_hot(data.y)
-        newY = torch.argmax(C.T.to(y_oh.dtype) @ y_oh, dim=1).to(data.y.dtype)
-        train_data[i].y = newY
-        train_data[i].test_mask = zero_list
-        train_data[i].edge_index = dense_to_sparse(C.T @ to_dense_adj(data.edge_index, max_num_nodes=num_nodes)[0] @ C)[0].to(torch.int64)
+    # feat = 1e5
+    # ## UGC
+    # for i, data in enumerate(train_data):
+    #     num_nodes = data.x.shape[0]
+    #     if num_nodes < 100: continue
+    #     C, zero_list = ugc(data, 0.1, i)
+    #     train_data[i].x = C.T @ train_data[i].x
+    #     # myX = torch.rand(train_data[i].x.shape[0], int(feat))
+    #     # myX[:,:train_data[i].x.shape[1]] = train_data[i].x
+    #     # train_data[i].x = myX
+    #     y_oh = F.one_hot(data.y)
+    #     newY = torch.argmax(C.T.to(y_oh.dtype) @ y_oh, dim=1).to(data.y.dtype)
+    #     train_data[i].y = newY
+    #     train_data[i].test_mask = zero_list
+    #     train_data[i].edge_index = dense_to_sparse(C.T @ to_dense_adj(data.edge_index, max_num_nodes=num_nodes)[0] @ C)[0].to(torch.int64)
 
-    print(train_data)
+    # print(train_data)
 
     
-    # myX = torch.rand(test_data.x.shape[0], int(feat))
-    # myX[:, :test_data.x.shape[1]] = test_data.x
-    # test_data.x = myX
-    print(test_data)
+    # # myX = torch.rand(test_data.x.shape[0], int(feat))
+    # # myX[:, :test_data.x.shape[1]] = test_data.x
+    # # test_data.x = myX
+    # print(test_data)
 
 
-    n = 0
-    l = [0]
-    for dataset in train_data:
-        n += dataset.x.shape[0]
-        l.append(n)
-    C = np.zeros((n, len(train_data)))
-    print(n)
-    for i in range(len(l) - 1):
-        C[l[i]:l[i+1], i] = 1
+    # n = 0
+    # l = [0]
+    # for dataset in train_data:
+    #     n += dataset.x.shape[0]
+    #     l.append(n)
+    # C = np.zeros((n, len(train_data)))
+    # print(n)
+    # for i in range(len(l) - 1):
+    #     C[l[i]:l[i+1], i] = 1
     
-    np.save(f'{data_directory}C_new_500.npy', C)
+    # np.save(f'{data_directory}C_new.npy', C)
 
 
-    for i in range(10):
-        train_features.append(train_data[i].x.numpy())
-        train_labels.append(train_data[i].y.numpy())
+    # for i in range(10):
+    #     train_features.append(train_data[i].x.numpy())
+    #     train_labels.append(train_data[i].y.numpy())
 
-    test_features.append(test_data.x.numpy())
-    test_labels.append(test_data.y.numpy())
+    # test_features.append(test_data.x.numpy())
+    # test_labels.append(test_data.y.numpy())
 
-    labels = np.concatenate([train_labels[i] for i in range(len(train_features))])
+    # labels = np.concatenate([train_labels[i] for i in range(len(train_features))])
 
-    X_a = test_data.x.numpy()
-    X_na = np.concatenate([train_features[i] for i in range(len(train_features))], axis=0)
+    # X_a = test_data.x.numpy()
+    # X_na = np.concatenate([train_features[i] for i in range(len(train_features))], axis=0)
     
-    print(X_a.shape, X_na.shape)
+    # print(X_a.shape, X_na.shape)
 
-    m = X_a.shape[0]
-    n = X_na.shape[0]
-    d = X_a.shape[1]
+    # m = X_a.shape[0]
+    # n = X_na.shape[0]
+    # d = X_a.shape[1]
 
-    n_sizes = [train_features[i].shape[0] for i in range(len(train_features))]
-    for i in range(len(n_sizes)):
-        globals()[f'n{i + 1}'] = n_sizes[i]
+    # n_sizes = [train_features[i].shape[0] for i in range(len(train_features))]
+    # for i in range(len(n_sizes)):
+    #     globals()[f'n{i + 1}'] = n_sizes[i]
 
-    print(f"Number of anchors Samples (m): {m}")
-    print(f"Number of non anchors Samples (n): {n}")
-    print(f"Number of Features (d): {d}")
+    # print(f"Number of anchors Samples (m): {m}")
+    # print(f"Number of non anchors Samples (n): {n}")
+    # print(f"Number of Features (d): {d}")
 
-    client_data = [train_features[i].astype('float') for i in range(len(train_features))]
+    # client_data = [train_features[i].astype('float') for i in range(len(train_features))]
 
-    D, V, V1, V2, W_1, DA, *DNA = dist_approx(*client_data, X_a=X_a.astype('float'), n=n)
+    # D, V, V1, V2, W_1, DA, *DNA = dist_approx(*client_data, X_a=X_a.astype('float'), n=n)
 
-    print('dist_approx done')
-    # Perform MDS
-    X_a=X_a.astype('float')
-    #profiler = LineProfiler()
-    #profiler.add_function(MDS_X)
-    #profiler.enable()
-    time1 = time.time()
-    X_final, loss = MDS_X(D, V1, V2, W_1, DA, X_a, n_sizes, n, d)
-    time1f = time.time()
-    print(f"Time taken on {args.dataset_name}: {time1f-time1} secs")
-    #profiler.disable()
-    os.makedirs(output_directory, exist_ok=True)
+    # print('dist_approx done')
+    # # Perform MDS
+    # X_a=X_a.astype('float')
+    # #profiler = LineProfiler()
+    # #profiler.add_function(MDS_X)
+    # #profiler.enable()
+    # time1 = time.time()
+    # X_final, loss = MDS_X(D, V1, V2, W_1, DA, X_a, n_sizes, n, d)
+    # time1f = time.time()
+    # print(f"Time taken on {args.dataset_name}: {time1f-time1} secs")
+    # #profiler.disable()
+    # os.makedirs(output_directory, exist_ok=True)
 
-    np.save(output_directory + f"X_final_{dataset_name}.npy", X_final)
-    print("Calculating the distance error between X_na and X_final of shapes", X_na.shape, X_final.shape, "X_na looks like", X_na, "X_final looks like", X_final)
-    error, D_true, D_esti, z_true, z_esti = dist_error(X_na.astype('float'), X_final)
-    np.save(output_directory + "D_esti_" + dataset_name + "_.npy", D_esti)
-    print("Error in distance approximation: ", error)
-    fscore = check_score(D_true, D_esti, 11)
-    print("F-score: ", fscore)
+    # np.save(output_directory + f"X_final_{dataset_name}.npy", X_final)
+    # print("Calculating the distance error between X_na and X_final of shapes", X_na.shape, X_final.shape, "X_na looks like", X_na, "X_final looks like", X_final)
+    # error, D_true, D_esti, z_true, z_esti = dist_error(X_na.astype('float'), X_final)
+    # np.save(output_directory + "D_esti_" + dataset_name + "_.npy", D_esti)
+    # print("Error in distance approximation: ", error)
+    # fscore = check_score(D_true, D_esti, 11)
+    # print("F-score: ", fscore)
 
-    # Run t-SNE
-    # Y = tsne(X_final, 2, max_iter=max_iter, initial_momentum=initial_momentum, final_momentum=final_momentum, eta=eta, min_gain=min_gain, early_exag=early_exag)
-    # print("Y", Y)
+    # # Run t-SNE
+    # # Y = tsne(X_final, 2, max_iter=max_iter, initial_momentum=initial_momentum, final_momentum=final_momentum, eta=eta, min_gain=min_gain, early_exag=early_exag)
+    # # print("Y", Y)
 
-    # Scatter plot
-    pylab.scatter(X_final[:, 0], X_final[:, 1], 20, labels)
-    pylab.savefig(output_directory + "vis.png")  # Save to the output filename
-    pylab.show()
+    # # Scatter plot
+    # pylab.scatter(X_final[:, 0], X_final[:, 1], 20, labels)
+    # pylab.savefig(output_directory + "vis.png")  # Save to the output filename
+    # pylab.show()
 
 
     ## Now testing for accuracy
@@ -570,7 +570,6 @@ if __name__ == "__main__":
     from attack import *
     from model import coragcn, niidgcn
 
-    from pfedgraph_gcosine import test_accuracy_pfed
+    from pfedgraph_gcosine_ import test_accuracy_pfed
 
-    test_accuracy_pfed(np.load(f'{data_directory}C_new.npy'), np.load(output_directory + "D_esti_" + dataset_name + "_.npy"), allow_pickle=True)
-    
+    test_accuracy_pfed(np.load(f'{data_directory}C_new.npy'), np.load(output_directory + "D_esti_" + dataset_name + "_.npy"))

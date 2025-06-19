@@ -4,7 +4,7 @@ from partition_graph import partition_graph
 import torch
 import os
 import glob
-from graphdataset import graphdataset_read
+# from graphdataset import graphdataset_read
 from scipy.spatial.distance import cdist
 import pickle
 import scipy

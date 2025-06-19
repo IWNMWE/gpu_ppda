@@ -111,7 +111,7 @@ def gen_graph_matrix(distance_matrix, assignment_matrix):
     A_sum = np.sum(A_dense, axis=1) 
     A_dense_norm  = A_dense / A_sum[:, np.newaxis]
     L = np.eye(A_dense.shape[0]) - A_dense_norm
-    print(assignment_matrix.shape)
+    print(assignment_matrix.shape, L.shape)
     L_graph = assignment_matrix.T @ L @ assignment_matrix
     D_graph = np.diag(np.diag(L_graph))
     A_graph = D_graph - L_graph

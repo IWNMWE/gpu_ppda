@@ -9,6 +9,8 @@ def get_dataloader(args,cfg):
             #PPDA datasets(use old partitions)
             if args.load_graph_path is not None:
                 datasets = np.load(args.load_graph_path + 'datasets.pkl', allow_pickle=True)
+                for dataset in datasets:
+                    dataset.train_mask = ~ dataset.test_mask
                 traindata_cls_counts_npy = np.load(args.load_graph_path + 'traindata_cls_counts_npy.npy', allow_pickle=True)
                 data_distributions = np.load(args.load_graph_path + 'data_distributions.npy', allow_pickle=True)
                 val_graph = torch.load(args.load_graph_path + 'val.pt')
