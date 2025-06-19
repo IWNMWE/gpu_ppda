@@ -53,7 +53,7 @@ def local_train_pfedgraph(args, round, nets_this_round, cluster_models, datasets
             optimizer.zero_grad()
 
             out = net(datasets[net_id].x.to('cuda'), datasets[net_id].edge_index.to('cuda'))
-            loss = criterion(out[datasets[net_id].test_mask == 0], target[datasets[net_id].test_mask == 0])
+            loss = criterion(out[datasets[net_id].train_mask], target[datasets[net_id].train_mask])
         
 
             if round > 0:
