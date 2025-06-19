@@ -11,7 +11,7 @@ import attridict
 def partition_graph(dataset : str, partition, n_parties, distribution_type = "average", iid_beta = 0.5, anchors=100):
         
     if partition == 'noniid' and dataset in ('cora', 'pubmed', 'citeseer'):
-
+    
 
         config = {
             # Task, Method, and Dataset Settings

@@ -30,6 +30,8 @@ from sklearn.preprocessing import StandardScaler
 from torchvision import datasets, transforms
 from tqdm import tqdm
 
+from graphdataset import store_partition_graph
+
 
 def Hbeta(D=np.array([]), beta=1.0):
     P = np.exp(-D.copy() * beta)
@@ -164,8 +166,7 @@ def dist_approx(*client_data, X_a, n):
     n_clients = [data.shape[0] for data in client_data]  # Number of samples in each client's data
     print("n_clients", n_clients)
 
-    DA = torch.cdist(X_a.to('cuda:1'), X_a, metric='euclidean')  # Anchor to anchor distance
-    X_a.to('cpu')
+    DA = cdist(X_a, X_a, metric='euclidean')  # Anchor to anchor distance
     D = np.zeros((sum(n_clients) + X_a.shape[0], sum(n_clients) + X_a.shape[0]))  # Initialize distance matrix
 
     print('hi')
@@ -174,17 +175,9 @@ def dist_approx(*client_data, X_a, n):
         for j, C_na_data_other in enumerate(client_data):
             if i == j:
                 D_offset = sum(n_clients[:i])
-                D[D_offset:D_offset + n_clients[i], D_offset:D_offset + n_clients[i]] = torch.cdist(C_na_data.to('cuda:1'), C_na_data, metric='euclidean')
-                C_na_data.to('cpu')
+                D[D_offset:D_offset + n_clients[i], D_offset:D_offset + n_clients[i]] = cdist(C_na_data, C_na_data, metric='euclidean')
     # Compute distances from each client to anchors
-    # DNA = [cdist(C_na_data, X_a, metric='euclidean') for C_na_data in client_data]
-    #------ GPU enabled code
-    DNA=[]
-    for C_na_data in client_data:
-
-        DNA.append(torch.cdist(C_na_data.to('cuda:1'), X_a.to('cuda:1'), p=2))
-        C_na_data.to('cpu')
-        X_a.to('cpu')
+    DNA = [cdist(C_na_data, X_a, metric='euclidean') for C_na_data in client_data]
 
     for i in range(num_clients):
         D_offset = sum(n_clients[:i])
@@ -227,10 +220,7 @@ def mat(D , V1 , V2 , W_1 , DA , X_a , n_list , n ,d , Zu_samples):
     #DNA_new = cdist(Zu , X_a , metric = 'euclidean')
     #X_a = tsne(X_a)
     for i in range(len(n_list)):
-        # client_distances = cdist(Zu[i], X_a, metric='euclidean')
-        client_distances = torch.cdist(Zu[i].to('cuda:1'), X_a.to('cuda:1'), p=2)
-        Zu[i].to('cpu')
-        X_a.to('cpu')
+        client_distances = cdist(Zu[i], X_a, metric='euclidean')
         DNA_new.append(client_distances)
 
     epsilon = 1e-3
@@ -298,12 +288,8 @@ def MDS_X(D, V1, V2, W_1, DA, X_a, n_list, n, d):
 
 
     DNA_new = []
-    print('leb', len(n_list))
     for i in range(len(n_list)):
-        # client_distances = cdist(Zu[i], X_a, metric='euclidean')
-        client_distances = torch.cdist(Zu[i].to('cuda:1'), X_a.to('cuda:1'), p=2)
-        Zu[i].to('cpu')
-        X_a.to('cpu')
+        client_distances = cdist(Zu[i], X_a, metric='euclidean')
         DNA_new.append(client_distances)
 
     epsilon = 1e-3
@@ -315,11 +301,7 @@ def MDS_X(D, V1, V2, W_1, DA, X_a, n_list, n, d):
     V1_inv =  cp.asnumpy(V1_inv)
     W_new = np.multiply(W_1, D)
 
-    # Dnew_list = [cdist(Zu[i], Zu[i], metric='euclidean') for i in range(len(n_list))]
-    Dnew_list = []
-    for i in range(len(n_list)):
-        Dnew_list.append(torch.cdist(Zu[i].to('cuda:1'), Zu[i], p=2))
-        Zu[i].to('cpu')
+    Dnew_list = [cdist(Zu[i], Zu[i], metric='euclidean') for i in range(len(n_list))]
 
     zero_blocks = []
     for i in range(len(n_list)):
@@ -461,6 +443,12 @@ if __name__ == "__main__":
     #    args.output = f"{dataset_name}_tsne_visualization.png"
 
     #train_data, test_data = load_data(dataset_name=dataset_name, num_clients=num_clients, test_size=0.2, data_dir=data_directory)
+    
+    ## If the dataset isn't partitioned 
+    try:
+        file = open(data_directory + "datasets.pkl",'rb')
+    except:
+        store_partition_graph(dataset_name, 0.5, 'noniid', num_clients, "./data/")
 
     file = open(data_directory + "datasets.pkl",'rb')
     train_data = pickle.load(file)
@@ -479,9 +467,9 @@ if __name__ == "__main__":
         if num_nodes < 100: continue
         C, zero_list = ugc(data, 0.1, i)
         train_data[i].x = C.T @ train_data[i].x
-        myX = torch.rand(train_data[i].x.shape[0], int(feat))
-        myX[:,:train_data[i].x.shape[1]] = train_data[i].x
-        train_data[i].x = myX
+        # myX = torch.rand(train_data[i].x.shape[0], int(feat))
+        # myX[:,:train_data[i].x.shape[1]] = train_data[i].x
+        # train_data[i].x = myX
         y_oh = F.one_hot(data.y)
         newY = torch.argmax(C.T.to(y_oh.dtype) @ y_oh, dim=1).to(data.y.dtype)
         train_data[i].y = newY
@@ -491,9 +479,9 @@ if __name__ == "__main__":
     print(train_data)
 
     
-    myX = torch.rand(test_data.x.shape[0], int(feat))
-    myX[:, :test_data.x.shape[1]] = test_data.x
-    test_data.x = myX
+    # myX = torch.rand(test_data.x.shape[0], int(feat))
+    # myX[:, :test_data.x.shape[1]] = test_data.x
+    # test_data.x = myX
     print(test_data)
 
 
@@ -507,24 +495,19 @@ if __name__ == "__main__":
     for i in range(len(l) - 1):
         C[l[i]:l[i+1], i] = 1
     
-    np.save(f'{data_directory}C_new.npy', C)
+    np.save(f'{data_directory}C_new_500.npy', C)
 
 
     for i in range(10):
-        # train_features.append(train_data[i].x.numpy())
-        train_features.append(train_data[i].x)
-        # train_labels.append(train_data[i].y.numpy())
-        train_labels.append(train_data[i].y)
-    # test_features.append(test_data.x.numpy())
-    # test_labels.append(test_data.y.numpy())
-    test_features.append(test_data.x)
-    test_labels.append(test_data.y)
+        train_features.append(train_data[i].x.numpy())
+        train_labels.append(train_data[i].y.numpy())
 
+    test_features.append(test_data.x.numpy())
+    test_labels.append(test_data.y.numpy())
 
     labels = np.concatenate([train_labels[i] for i in range(len(train_features))])
 
-    # X_a = test_data.x.numpy()
-    X_a = test_data.x
+    X_a = test_data.x.numpy()
     X_na = np.concatenate([train_features[i] for i in range(len(train_features))], axis=0)
     
     print(X_a.shape, X_na.shape)
@@ -574,3 +557,20 @@ if __name__ == "__main__":
     pylab.scatter(X_final[:, 0], X_final[:, 1], 20, labels)
     pylab.savefig(output_directory + "vis.png")  # Save to the output filename
     pylab.show()
+
+
+    ## Now testing for accuracy
+    import torch
+    import torch.optim as optim
+
+    from pfedgraph_gcosine.config import get_args
+    from torch_geometric.utils import subgraph
+    from pfedgraph_gcosine.utils import aggregation_by_graph, update_graph_matrix_neighbor, compute_acc, compute_local_test_accuracy, gen_graph_matrix
+    from prepare_data import get_dataloader
+    from attack import *
+    from model import coragcn, niidgcn
+
+    from pfedgraph_gcosine import test_accuracy_pfed
+
+    test_accuracy_pfed(np.load(f'{data_directory}C_new.npy'), np.load(output_directory + "D_esti_" + dataset_name + "_.npy"), allow_pickle=True)
+    

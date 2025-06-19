@@ -79,80 +79,81 @@ def local_train_pfedgraph(args, round, nets_this_round, cluster_models, datasets
     return np.array(best_test_acc_list)[np.array(benign_client_list)].mean()
 
 
-args, cfg = get_args()
-print(args)
-seed = args.init_seed
-np.random.seed(seed)
-torch.manual_seed(seed)
-if torch.cuda.is_available():
-    torch.cuda.manual_seed(seed)
-random.seed(seed)
+def test_accuracy_pfed(C_dir, D_dir):
+    args, cfg = get_args()
+    print(args)
+    seed = args.init_seed
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(seed)
+    random.seed(seed)
 
-n_party_per_round = int(args.n_parties * args.sample_fraction)
-party_list = [i for i in range(args.n_parties)]
-party_list_rounds = []
-if n_party_per_round != args.n_parties:
-    for i in range(args.comm_round):
-        party_list_rounds.append(random.sample(party_list, n_party_per_round))
-else:
-    for i in range(args.comm_round):
-        party_list_rounds.append(party_list)
+    n_party_per_round = int(args.n_parties * args.sample_fraction)
+    party_list = [i for i in range(args.n_parties)]
+    party_list_rounds = []
+    if n_party_per_round != args.n_parties:
+        for i in range(args.comm_round):
+            party_list_rounds.append(random.sample(party_list, n_party_per_round))
+    else:
+        for i in range(args.comm_round):
+            party_list_rounds.append(party_list)
 
-benign_client_list = random.sample(party_list, int(args.n_parties * (1-args.attack_ratio)))
-benign_client_list.sort()
-print(f'>> -------- Benign clients: {benign_client_list} --------')
+    benign_client_list = random.sample(party_list, int(args.n_parties * (1-args.attack_ratio)))
+    benign_client_list.sort()
+    print(f'>> -------- Benign clients: {benign_client_list} --------')
 
-datasets, traindata_cls_counts, data_distributions, val = get_dataloader(args,cfg)
-if args.dataset in ('cora', 'pubmed', 'citeseer'):
-    model = coragcn
-elif args.dataset == 'niid':
-    model = niidgcn
+    datasets, traindata_cls_counts, data_distributions, val = get_dataloader(args,cfg)
+    if args.dataset in ('cora', 'pubmed', 'citeseer'):
+        model = coragcn
+    elif args.dataset == 'niid':
+        model = niidgcn
+        
+    global_model = model(cfg['classes_size'], cfg['feature_size'])
+    global_parameters = global_model.state_dict()
+    local_models = []
+    best_val_acc_list, best_test_acc_list = [],[]
+    dw = []
+    for i in range(cfg['client_num']):
+        local_models.append(model(cfg['classes_size'], cfg['feature_size']))
+        dw.append({key : torch.zeros_like(value) for key, value in local_models[i].named_parameters()})
+        best_val_acc_list.append(0)
+        best_test_acc_list.append(0)
+
+    graph_matrix = torch.ones(len(local_models), len(local_models)) / (len(local_models)-1)                 # Collaboration Graph
+    graph_matrix[range(len(local_models)), range(len(local_models))] = 0
+
+    for net in local_models:
+        net.load_state_dict(global_parameters)
+
+        
+    cluster_model_vectors = {}
+
+    if args.ppda:
+        distance_matrix = np.load(args.load_graph_path + "D_esti.npy")
+        assignement_matrix = np.load(args.load_graph_path + "C_new_500.npy")
+        graph_matrix = gen_graph_matrix(distance_matrix, assignement_matrix)
+
+    for round in range(cfg["comm_round"]):
+        party_list_this_round = party_list_rounds[round]
+        if args.sample_fraction < 1.0:
+            print(f'>> Clients in this round : {party_list_this_round}')
+        nets_this_round = {k: local_models[k] for k in party_list_this_round}
+        nets_param_start = {k: copy.deepcopy(local_models[k]) for k in party_list_this_round}
+
+        mean_personalized_acc = local_train_pfedgraph(args, round, nets_this_round, cluster_model_vectors, datasets, data_distributions, val, best_val_acc_list, best_test_acc_list, benign_client_list)
     
-global_model = model(cfg['classes_size'], cfg['feature_size'])
-global_parameters = global_model.state_dict()
-local_models = []
-best_val_acc_list, best_test_acc_list = [],[]
-dw = []
-for i in range(cfg['client_num']):
-    local_models.append(model(cfg['classes_size'], cfg['feature_size']))
-    dw.append({key : torch.zeros_like(value) for key, value in local_models[i].named_parameters()})
-    best_val_acc_list.append(0)
-    best_test_acc_list.append(0)
+        total_data_points = sum([datasets[k].x.shape[0] for k in party_list_this_round])
 
-graph_matrix = torch.ones(len(local_models), len(local_models)) / (len(local_models)-1)                 # Collaboration Graph
-graph_matrix[range(len(local_models)), range(len(local_models))] = 0
+        fed_avg_freqs = {k: datasets[k].x.shape[0] / total_data_points for k in party_list_this_round}
 
-for net in local_models:
-    net.load_state_dict(global_parameters)
+        manipulate_gradient(args, None, nets_this_round, benign_client_list, nets_param_start)
+        
+        if (not args.ppda) :
+            graph_matrix = update_graph_matrix_neighbor(graph_matrix, nets_this_round, global_parameters, dw, fed_avg_freqs, args.alpha, args.difference_measure)   # Graph Matrix is not normalized yet
+        
+        cluster_model_vectors = aggregation_by_graph(cfg, graph_matrix, nets_this_round, global_parameters)                                                    # Aggregation weight is normalized here
 
-    
-cluster_model_vectors = {}
-
-if args.ppda:
-    distance_matrix = np.load(args.load_graph_path + "D_esti.npy")
-    assignement_matrix = np.load(args.load_graph_path + "C_new_500.npy")
-    graph_matrix = gen_graph_matrix(distance_matrix, assignement_matrix)
-
-for round in range(cfg["comm_round"]):
-    party_list_this_round = party_list_rounds[round]
-    if args.sample_fraction < 1.0:
-        print(f'>> Clients in this round : {party_list_this_round}')
-    nets_this_round = {k: local_models[k] for k in party_list_this_round}
-    nets_param_start = {k: copy.deepcopy(local_models[k]) for k in party_list_this_round}
-
-    mean_personalized_acc = local_train_pfedgraph(args, round, nets_this_round, cluster_model_vectors, datasets, data_distributions, val, best_val_acc_list, best_test_acc_list, benign_client_list)
-   
-    total_data_points = sum([datasets[k].x.shape[0] for k in party_list_this_round])
-
-    fed_avg_freqs = {k: datasets[k].x.shape[0] / total_data_points for k in party_list_this_round}
-
-    manipulate_gradient(args, None, nets_this_round, benign_client_list, nets_param_start)
-    
-    if (not args.ppda) :
-        graph_matrix = update_graph_matrix_neighbor(graph_matrix, nets_this_round, global_parameters, dw, fed_avg_freqs, args.alpha, args.difference_measure)   # Graph Matrix is not normalized yet
-    
-    cluster_model_vectors = aggregation_by_graph(cfg, graph_matrix, nets_this_round, global_parameters)                                                    # Aggregation weight is normalized here
-
-    print('>> (Current) Round {} | Local Per: {:.5f}'.format(round, mean_personalized_acc))
-    print('-'*80)
+        print('>> (Current) Round {} | Local Per: {:.5f}'.format(round, mean_personalized_acc))
+        print('-'*80)
  

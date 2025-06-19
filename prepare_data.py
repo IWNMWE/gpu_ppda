@@ -17,4 +17,3 @@ def get_dataloader(args,cfg):
             else:   
                 datasets, traindata_cls_counts_npy, data_distributions, val_graph, val_cls_count_npy = graphdataset_read(args.dataset, args.n_parties, args.partition, args.beta, cfg['classes_size'])
                 return datasets, traindata_cls_counts_npy, data_distributions    
-    
