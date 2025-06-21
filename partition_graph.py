@@ -125,7 +125,7 @@ def partition_graph(dataset : str, partition, n_parties, distribution_type = "av
             "distribution_type": "average",  # Distribution type among clients
             "n_trainer": n_parties,
             "batch_size": -1,  # -1 indicates full batch training
-            "num_hops": 0,
+            "num_hops": 1,
             # Dataset Handling Options
             "use_huggingface": False,  # Load dataset directly from Hugging Face Hub
             "num_nodes_to_remove" : anchors,  # Number of nodes to remove for anchor selection
