@@ -98,15 +98,15 @@ def store_partition_graph(dataset_name, beta, distribution, num_clients, base_pa
         dists.append(dist)
     D_partial = scipy.linalg.block_diag(*dists)
     
-    name  = base_path + dataset_name + '/' + distribution  + '/' + str(beta).replace('.', '_') 
-    os.makedirs(name, exist_ok=True)
-    np.save(name + '/D_partial.npy', D_partial)
+    # name  = base_path + dataset_name + '/' + distribution  + '/' + str(beta).replace('.', '_') 
+    # os.makedirs(name, exist_ok=True)
+    # np.save(name + f'/D_partial_{num_anchors}.npy', D_partial)
 
-    with open(name + '/datasets.pkl', "wb") as f:
-        pickle.dump(datasets,f)
-    np.save(name + '/traindata_cls_counts_npy.npy', traindata_cls_counts_npy)
-    np.save(name + '/data_distributions.npy', data_distributions)
-    torch.save(val, name + '/val.pt')
+    # with open(name + f'/datasets_{num_anchors}.pkl', "wb") as f:
+    #     pickle.dump(datasets,f)
+    # np.save(name + f'/traindata_cls_counts_npy_{num_anchors}.npy', traindata_cls_counts_npy)
+    # np.save(name + f'/data_distributions.npy_{num_anchors}', data_distributions)
+    # torch.save(val, name + f'/val_{num_anchors}.pt')
 
     n = 0
     l = [0]
@@ -117,6 +117,8 @@ def store_partition_graph(dataset_name, beta, distribution, num_clients, base_pa
     for i in range(len(l) - 1):
         C[l[i]:l[i+1], i] = 1
     
-    np.save(name + "/C.npy", C)
+    # np.save(name + f"/C_{num_anchors}.npy", C)
+
+    return D_partial, datasets, traindata_cls_counts_npy, data_distributions, val
 
     

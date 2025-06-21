@@ -16,7 +16,7 @@ def compute_local_test_accuracy(model, data, data_distribution):
         out = model(data.x.to('cuda'), data.edge_index.to('cuda'))
         pred = out.argmax(dim=1)  # Use the class with highest probability.
         test_correct = pred[data.test_mask] == data.y[data.test_mask].to('cuda')  # Check against ground-truth labels.
-        test_acc = float(test_correct.sum()) / float(data.test_mask.sum())
+        # test_acc = float(test_correct.sum()) / float(data.test_mask.sum())
         generalized_total = data.test_mask.sum() 
         generalized_correct = test_correct.sum()
         labels = data.y[data.test_mask] 

@@ -28,7 +28,7 @@ def ugc(dataset, coarsening_ratio, i):
     for super_idx, node_list in enumerate(supernode_dict.values()):
         for node in node_list:
             C[node][super_idx] = 1
-            zero_list[super_idx] = zero_list[super_idx] and (dataset.test_mask[node])
+            zero_list[super_idx] = zero_list[super_idx] and (not dataset.train_mask[node])
     C_diag = torch.sum(C, dim=0)
     P = torch.sparse.mm(C,(torch.diag(torch.pow(C_diag, -1/2))))
     P = P.to_sparse().to_dense()

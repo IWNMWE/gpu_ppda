@@ -125,7 +125,7 @@ def partition_graph(dataset : str, partition, n_parties, distribution_type = "av
             "distribution_type": "average",  # Distribution type among clients
             "n_trainer": n_parties,
             "batch_size": -1,  # -1 indicates full batch training
-            "num_hops": 1,
+            "num_hops": 0,
             # Dataset Handling Options
             "use_huggingface": False,  # Load dataset directly from Hugging Face Hub
             "num_nodes_to_remove" : anchors,  # Number of nodes to remove for anchor selection
@@ -155,6 +155,8 @@ def partition_graph(dataset : str, partition, n_parties, distribution_type = "av
             # Get node and edge indices for this client
             node_subset = communicate_node_global_indexes[client_id]  # Nodes belonging to the client
             edge_subset = global_edge_indexes_clients[client_id]  # Edges for the client
+            print('hello ji')
+            print(node_subset.shape)
 
             # Step 2: Filter nodes for this client (ensure all nodes in node_subset)
             sub_edge_index, _ = subgraph(

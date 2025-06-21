@@ -32,6 +32,18 @@ from tqdm import tqdm
 
 from graphdataset import store_partition_graph
 
+def update_table(dataset, accuracy, anchors, coarsening_ratio, ifppda=True, path="cora_exp.csv"):
+    row = {"dataset": dataset, '#Anchors': anchors, "accuracy": accuracy, 'PPDA': ifppda, 'r': coarsening_ratio}
+
+    # Check if file exists and is not empty
+    if os.path.exists(path) and os.path.getsize(path) > 0:
+        df = pd.read_csv(path)
+        df = pd.concat([df, pd.DataFrame([row])], ignore_index=True)
+    else:
+        df = pd.DataFrame([row])
+    
+    df.to_csv(path, index=False)
+    print(f"Results saved: {accuracy} acc on {dataset} with {anchors} anchors and coarsening ratio {coarsening_ratio}")
 
 def Hbeta(D=np.array([]), beta=1.0):
     P = np.exp(-D.copy() * beta)
@@ -425,8 +437,45 @@ if __name__ == "__main__":
     parser.add_argument('--dataset_name', type=str, default='cora',help='Name of the dataset to load (BRCA or MNIST).')
     parser.add_argument('--num_clients', type=int, default=10, help='Number of clients to use for the dataset.')
     parser.add_argument('--data_directory', type=str, default='./data/cora/', help='Directory where dataset files are located.')
+    parser.add_argument('--r', type=float, default=0.1, help='Coarsening ratio')
+    parser.add_argument('--nAnchors', type=int, required=True, help="Number of anchors")
+    parser.add_argument('--ifugc', type=int, default=1)
+
+    parser.add_argument('--gpu', type=str, default="1")
+    parser.add_argument('--model', type=str, default='gcn', help='neural network used in training')
+    parser.add_argument('--dataset', type=str, default='cora', help='dataset used for training')
+    parser.add_argument('--partition', type=str, default='noniid', help='the data partitioning strategy')
+    parser.add_argument('--num_local_iterations', type=int, default=200, help='number of local iterations')
+    parser.add_argument('--batch_size', type=int, default=64, help='input batch size for training (default: 64)')
+    parser.add_argument('--lr', type=float, default=0.01, help='learning rate (default: 0.1)')
+    parser.add_argument('--epochs', type=int, default=10, help='number of local epochs')
+    parser.add_argument('--n_parties', type=int, default=10, help='number of workers in a distributed cluster')
+    parser.add_argument('--comm_round', type=int, default=50, help='number of maximum communication roun')
+    parser.add_argument('--init_seed', type=int, default=0, help="Random seed")
+    parser.add_argument('--dropout_p', type=float, required=False, default=0.0, help="Dropout probability. Default=0.0")
+    parser.add_argument('--datadir', type=str, required=False, default="./data/", help="Data directory")
+    parser.add_argument('--beta', type=float, default=200,
+                        help='The parameter for the dirichlet distribution for data partitioning')
+    parser.add_argument('--skew_class', type=int, default = 2, help='The parameter for the noniid-skew for data partitioning')
+    parser.add_argument('--reg', type=float, default=1e-5, help="L2 regularization strength")
+    parser.add_argument('--log_file_name', type=str, default=None, help='The log file name')
+    parser.add_argument('--optimizer', type=str, default='sgd', help='the optimizer')
+    parser.add_argument('--sample_fraction', type=float, default=1.0, help='how many clients are sampled in each round')
+    parser.add_argument('--concen_loss', type=str, default='uniform_norm', choices=['norm', 'uniform_norm'], help='How to measure the modle difference')
+    parser.add_argument('--weight_norm', type=str, default='relu', choices=['sum', 'softmax', 'abs', 'relu', 'sigmoid'], help='How to measure the model difference')
+    parser.add_argument('--difference_measure', type=str, default='all', help='How to measure the model difference')
+    
+    parser.add_argument('--load_graph_path', type=str, default='./data/cora/', help='The path to load the graph')
+    parser.add_argument('--alpha', type=float, default=0.8, help='Hyper-parameter to avoid concentration')
+    parser.add_argument('--lam', type=float, default=0.01, help="Hyper-parameter in the objective")
+    parser.add_argument('--ppda', type=bool, default=True, help='Whether to use PPDA')
+    # attack
+    parser.add_argument('--attack_type', type=str, default="inv_grad")
+    parser.add_argument('--attack_ratio', type=float, default=0.0)
+
     args = parser.parse_args()
 
+    print(args)
     max_iter = args.max_iter
     initial_momentum = args.initial_momentum
     final_momentum = args.final_momentum
@@ -437,126 +486,137 @@ if __name__ == "__main__":
     data_directory = args.data_directory
     num_clients = args.num_clients
     output_directory = args.output_directory
+    coarsening_ratio = args.r
 
     # Set default output filename based on the dataset name if not provided
     #if args.output is None:
     #    args.output = f"{dataset_name}_tsne_visualization.png"
 
     #train_data, test_data = load_data(dataset_name=dataset_name, num_clients=num_clients, test_size=0.2, data_dir=data_directory)
-    
-    ## If the dataset isn't partitioned 
-    # try:
-    #     file = open(data_directory + "datasets.pkl",'rb')
-    # except:
-    #     store_partition_graph(dataset_name, 0.5, 'noniid', num_clients, "./data/")
 
-    # file = open(data_directory + "datasets.pkl",'rb')
+    
+    # Partition the data
+    D_partial, train_data, traindata_cls_counts_npy, data_distributions, test_data = store_partition_graph(dataset_name, 0.5, 'noniid', num_clients, "./data/", args.nAnchors)
+    # D_partial, train_data, traindata_cls_counts_npy, data_distributions, test_data = (np.load('./data/cora/D_partial.npy'),
+    #                                                                                    np.load('./data/cora/datasets.pkl', allow_pickle=True),
+    #                                                                                    np.load('./data/cora/traindata_cls_counts_npy.npy'),
+    #                                                                                    np.load('./data/cora/data_distributions.npy'),
+    #                                                                                    torch.load('./data/cora/val.pt', weights_only=False))
+    # file = open(data_directory + f"datasets.pkl",'rb')
     # train_data = pickle.load(file)
     # file.close()
-    # test_data = torch.load(args.data_directory + "val.pt", weights_only=False)
+    # test_data = torch.load(args.data_directory + f"val.pt", weights_only=False)
+    
+    print(f'Dataset Name: {dataset_name}\n Coarsening with UGC: {args.ifugc} \n Number for clients: {num_clients} \n Number of Anchors: {args.nAnchors}')   
+ 
+    train_features = []
+    train_labels = []
+    test_features = []
+    test_labels = []
 
-    # train_features = []
-    # train_labels = []
-    # test_features = []
-    # test_labels = []
-
-    # feat = 1e5
-    # ## UGC
-    # for i, data in enumerate(train_data):
-    #     num_nodes = data.x.shape[0]
-    #     if num_nodes < 100: continue
-    #     C, zero_list = ugc(data, 0.1, i)
-    #     train_data[i].x = C.T @ train_data[i].x
-    #     # myX = torch.rand(train_data[i].x.shape[0], int(feat))
-    #     # myX[:,:train_data[i].x.shape[1]] = train_data[i].x
-    #     # train_data[i].x = myX
-    #     y_oh = F.one_hot(data.y)
-    #     newY = torch.argmax(C.T.to(y_oh.dtype) @ y_oh, dim=1).to(data.y.dtype)
-    #     train_data[i].y = newY
-    #     train_data[i].test_mask = zero_list
-    #     train_data[i].edge_index = dense_to_sparse(C.T @ to_dense_adj(data.edge_index, max_num_nodes=num_nodes)[0] @ C)[0].to(torch.int64)
-
-    # print(train_data)
+    feat = 1e5
+    ## UGC
+    if args.ifugc:
+        for i, data in enumerate(train_data):
+            data.train_mask = ~data.test_mask
+            print(f'Before coarsening:: Train: {data.train_mask.sum()}, Test: {data.test_mask.sum()}')
+            num_nodes = data.x.shape[0]
+            if num_nodes < 100: continue
+            C, zero_list = ugc(data, coarsening_ratio, i)
+            train_data[i].x = C.T @ train_data[i].x
+            # myX = torch.rand(train_data[i].x.shape[0], int(feat))
+            # myX[:,:train_data[i].x.shape[1]] = train_data[i].x
+            # train_data[i].x = myX
+            y_oh = F.one_hot(data.y)
+            y_oh[~(train_data[i].train_mask)] = torch.zeros(1, y_oh.shape[1], dtype=y_oh.dtype)
+            newY = torch.argmax(C.T.to(y_oh.dtype) @ y_oh, dim=1).to(data.y.dtype)
+            train_data[i].y = newY
+            train_data[i].test_mask = zero_list
+            train_data[i].train_mask = ~zero_list
+            train_data[i].edge_index = dense_to_sparse(C.T @ to_dense_adj(data.edge_index, max_num_nodes=num_nodes)[0] @ C)[0].to(torch.int64)
+            print(f'After coarsening:: Train: {data.train_mask.sum()}, Test: {data.test_mask.sum()}')
+    print(train_data)
 
     
-    # # myX = torch.rand(test_data.x.shape[0], int(feat))
-    # # myX[:, :test_data.x.shape[1]] = test_data.x
-    # # test_data.x = myX
-    # print(test_data)
+    # myX = torch.rand(test_data.x.shape[0], int(feat))
+    # myX[:, :test_data.x.shape[1]] = test_data.x
+    # test_data.x = myX
+    print(test_data.test_mask.sum())
+    # exit(1)
 
 
-    # n = 0
-    # l = [0]
-    # for dataset in train_data:
-    #     n += dataset.x.shape[0]
-    #     l.append(n)
-    # C = np.zeros((n, len(train_data)))
-    # print(n)
-    # for i in range(len(l) - 1):
-    #     C[l[i]:l[i+1], i] = 1
+    n = 0
+    l = [0]
+    for dataset in train_data:
+        n += dataset.x.shape[0]
+        l.append(n)
+    C = np.zeros((n, len(train_data)))
+    print(n)
+    for i in range(len(l) - 1):
+        C[l[i]:l[i+1], i] = 1
     
-    # np.save(f'{data_directory}C_new.npy', C)
+    C_new = C
 
 
-    # for i in range(10):
-    #     train_features.append(train_data[i].x.numpy())
-    #     train_labels.append(train_data[i].y.numpy())
+    for i in range(10):
+        train_features.append(train_data[i].x.numpy())
+        train_labels.append(train_data[i].y.numpy())
 
-    # test_features.append(test_data.x.numpy())
-    # test_labels.append(test_data.y.numpy())
+    test_features.append(test_data.x.numpy())
+    test_labels.append(test_data.y.numpy())
 
-    # labels = np.concatenate([train_labels[i] for i in range(len(train_features))])
+    labels = np.concatenate([train_labels[i] for i in range(len(train_features))])
 
-    # X_a = test_data.x.numpy()
-    # X_na = np.concatenate([train_features[i] for i in range(len(train_features))], axis=0)
+    X_a = test_data.x.numpy()
+    X_na = np.concatenate([train_features[i] for i in range(len(train_features))], axis=0)
     
-    # print(X_a.shape, X_na.shape)
+    print(X_a.shape, X_na.shape)
 
-    # m = X_a.shape[0]
-    # n = X_na.shape[0]
-    # d = X_a.shape[1]
+    m = X_a.shape[0]
+    n = X_na.shape[0]
+    d = X_a.shape[1]
 
-    # n_sizes = [train_features[i].shape[0] for i in range(len(train_features))]
-    # for i in range(len(n_sizes)):
-    #     globals()[f'n{i + 1}'] = n_sizes[i]
+    n_sizes = [train_features[i].shape[0] for i in range(len(train_features))]
+    for i in range(len(n_sizes)):
+        globals()[f'n{i + 1}'] = n_sizes[i]
 
-    # print(f"Number of anchors Samples (m): {m}")
-    # print(f"Number of non anchors Samples (n): {n}")
-    # print(f"Number of Features (d): {d}")
+    print(f"Number of anchors Samples (m): {m}")
+    print(f"Number of non anchors Samples (n): {n}")
+    print(f"Number of Features (d): {d}")
 
-    # client_data = [train_features[i].astype('float') for i in range(len(train_features))]
+    client_data = [train_features[i].astype('float') for i in range(len(train_features))]
 
-    # D, V, V1, V2, W_1, DA, *DNA = dist_approx(*client_data, X_a=X_a.astype('float'), n=n)
+    D, V, V1, V2, W_1, DA, *DNA = dist_approx(*client_data, X_a=X_a.astype('float'), n=n)
 
-    # print('dist_approx done')
-    # # Perform MDS
-    # X_a=X_a.astype('float')
-    # #profiler = LineProfiler()
-    # #profiler.add_function(MDS_X)
-    # #profiler.enable()
-    # time1 = time.time()
-    # X_final, loss = MDS_X(D, V1, V2, W_1, DA, X_a, n_sizes, n, d)
-    # time1f = time.time()
-    # print(f"Time taken on {args.dataset_name}: {time1f-time1} secs")
-    # #profiler.disable()
-    # os.makedirs(output_directory, exist_ok=True)
+    print('dist_approx done')
+    # Perform MDS
+    X_a=X_a.astype('float')
+    #profiler = LineProfiler()
+    #profiler.add_function(MDS_X)
+    #profiler.enable()
+    time1 = time.time()
+    X_final, loss = MDS_X(D, V1, V2, W_1, DA, X_a, n_sizes, n, d)
+    time1f = time.time()
+    print(f"Time taken on {args.dataset_name}: {time1f-time1} secs")
+    #profiler.disable()
+    os.makedirs(output_directory, exist_ok=True)
 
-    # np.save(output_directory + f"X_final_{dataset_name}.npy", X_final)
-    # print("Calculating the distance error between X_na and X_final of shapes", X_na.shape, X_final.shape, "X_na looks like", X_na, "X_final looks like", X_final)
-    # error, D_true, D_esti, z_true, z_esti = dist_error(X_na.astype('float'), X_final)
-    # np.save(output_directory + "D_esti_" + dataset_name + "_.npy", D_esti)
-    # print("Error in distance approximation: ", error)
-    # fscore = check_score(D_true, D_esti, 11)
-    # print("F-score: ", fscore)
+    # np.save(output_directory + f"X_final_{dataset_name}_{args.nAnchors}.npy", X_final)
+    print("Calculating the distance error between X_na and X_final of shapes", X_na.shape, X_final.shape, "X_na looks like", X_na, "X_final looks like", X_final)
+    error, D_true, D_esti, z_true, z_esti = dist_error(X_na.astype('float'), X_final)
+    # np.save(output_directory + f"D_esti_{args.nAnchors}" + dataset_name + "_.npy", D_esti)
+    print("Error in distance approximation: ", error)
+    fscore = check_score(D_true, D_esti, 11)
+    print("F-score: ", fscore)
 
-    # # Run t-SNE
-    # # Y = tsne(X_final, 2, max_iter=max_iter, initial_momentum=initial_momentum, final_momentum=final_momentum, eta=eta, min_gain=min_gain, early_exag=early_exag)
-    # # print("Y", Y)
+    # Run t-SNE
+    # Y = tsne(X_final, 2, max_iter=max_iter, initial_momentum=initial_momentum, final_momentum=final_momentum, eta=eta, min_gain=min_gain, early_exag=early_exag)
+    # print("Y", Y)
 
-    # # Scatter plot
-    # pylab.scatter(X_final[:, 0], X_final[:, 1], 20, labels)
-    # pylab.savefig(output_directory + "vis.png")  # Save to the output filename
-    # pylab.show()
+    # Scatter plot
+    pylab.scatter(X_final[:, 0], X_final[:, 1], 20, labels)
+    pylab.savefig(output_directory + "vis.png")  # Save to the output filename
+    pylab.show()
 
 
     ## Now testing for accuracy
@@ -571,5 +631,11 @@ if __name__ == "__main__":
     from model import coragcn, niidgcn
 
     from pfedgraph_gcosine_ import test_accuracy_pfed
-
-    test_accuracy_pfed(np.load(f'{data_directory}C_new.npy'), np.load(output_directory + "D_esti_" + dataset_name + "_.npy"))
+    
+    time2 = time.time()
+    reqs = {'datasets': train_data, 'traindata_cls_counts_npy': traindata_cls_counts_npy, 'data_distributions': data_distributions, 'val_graph': test_data}
+    myacc = test_accuracy_pfed(C_new, D_esti, args, reqs)
+    time2f = time.time()
+    print(time2f-time2)
+    print('The accuracy on dataset with coarsening ratio is myacc with time taken mytime')
+    update_table(dataset_name, myacc*100, args.nAnchors, coarsening_ratio)

@@ -79,8 +79,9 @@ def local_train_pfedgraph(args, round, nets_this_round, cluster_models, datasets
     return np.array(best_test_acc_list)[np.array(benign_client_list)].mean()
 
 
-def test_accuracy_pfed(C_dir, D_dir):
-    args, cfg = get_args()
+def test_accuracy_pfed(C_dir, D_dir, myargs, reqs):
+    cfg = get_args(myargs)
+    args = myargs
     print(args)
     seed = args.init_seed
     np.random.seed(seed)
@@ -103,7 +104,7 @@ def test_accuracy_pfed(C_dir, D_dir):
     benign_client_list.sort()
     print(f'>> -------- Benign clients: {benign_client_list} --------')
 
-    datasets, traindata_cls_counts, data_distributions, val = get_dataloader(args,cfg)
+    datasets, traindata_cls_counts, data_distributions, val = get_dataloader(args,cfg, reqs)
     if args.dataset in ('cora', 'pubmed', 'citeseer'):
         model = coragcn
     elif args.dataset == 'niid':
@@ -157,4 +158,6 @@ def test_accuracy_pfed(C_dir, D_dir):
 
         print('>> (Current) Round {} | Local Per: {:.5f}'.format(round, mean_personalized_acc))
         print('-'*80)
+    
+    return mean_personalized_acc
  
