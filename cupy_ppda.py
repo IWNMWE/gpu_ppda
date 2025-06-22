@@ -417,14 +417,14 @@ def check_score(D_true, D_approx,k):
 
 if __name__ == "__main__":
     torch.cuda.empty_cache()
-    for i in range(cuda.Device.count()):
-        dev = cuda.Device(i)
-        ctx = dev.make_context()
-        free, total = cuda.mem_get_info()
-        print(f"Device {i}: {dev.name()} | Free: {free // (1024**2)} MB / Total: {total // (1024**2)} MB")
-        ctx.pop()
+    # for i in range(cuda.Device.count()):
+    #     dev = cuda.Device(i)
+    #     ctx = dev.make_context()
+    #     free, total = cuda.mem_get_info()
+    #     print(f"Device {i}: {dev.name()} | Free: {free // (1024**2)} MB / Total: {total // (1024**2)} MB")
+    #     ctx.pop()
     
-    cp.cuda.runtime.setDevice(1)
+    # cp.cuda.runtime.setDevice(1)
 
     parser = argparse.ArgumentParser(description='Run t-SNE with random search hyperparameters.')
     parser.add_argument('--max_iter', type=int, default=1000, help='Maximum number of iterations.')
