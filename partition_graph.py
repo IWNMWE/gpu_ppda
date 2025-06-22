@@ -125,7 +125,7 @@ def partition_graph(dataset : str, partition, n_parties, distribution_type = "av
             "distribution_type": "average",  # Distribution type among clients
             "n_trainer": n_parties,
             "batch_size": -1,  # -1 indicates full batch training
-            "num_hops": 0,
+            "num_hops": 1,
             # Dataset Handling Options
             "use_huggingface": False,  # Load dataset directly from Hugging Face Hub
             "num_nodes_to_remove" : anchors,  # Number of nodes to remove for anchor selection
@@ -153,6 +153,7 @@ def partition_graph(dataset : str, partition, n_parties, distribution_type = "av
         # Loop through clients
         for client_id in range(len(split_node_indexes)):
             # Get node and edge indices for this client
+            client_mask = torch.isin(communicate_node_global_indexes[client_id], split_node_indexes[client_id])
             node_subset = communicate_node_global_indexes[client_id]  # Nodes belonging to the client
             edge_subset = global_edge_indexes_clients[client_id]  # Edges for the client
             print('hello ji')
@@ -168,10 +169,10 @@ def partition_graph(dataset : str, partition, n_parties, distribution_type = "av
             sub_labels = labels[node_subset]
             train_mask = torch.zeros(sub_features.shape[0], dtype=torch.bool)
             test_mask = torch.zeros(sub_features.shape[0], dtype=torch.bool)
-            train_mask[in_com_train_node_local_indexes[client_id]] = 1
-            test_mask[in_com_test_node_local_indexes[client_id]] = 1
+            train_mask[in_com_train_node_local_indexes[client_id]] = True
+            test_mask[in_com_test_node_local_indexes[client_id]] = True
             # Store the subgraph
-            client_subgraphs.append(Data(x=sub_features, edge_index=sub_edge_index, y=sub_labels, test_mask=test_mask, train_mask=train_mask))
+            client_subgraphs.append(Data(x=sub_features, edge_index=sub_edge_index, y=sub_labels, test_mask=test_mask, train_mask=train_mask, client_mask=client_mask))
         sub_val_edge_index, _ = subgraph(
             subset=val_node_index, edge_index=val_edge_index, relabel_nodes=True, num_nodes=features.shape[0] + val_features.shape[0]
         )

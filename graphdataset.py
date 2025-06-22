@@ -94,7 +94,8 @@ def store_partition_graph(dataset_name, beta, distribution, num_clients, base_pa
     datasets, traindata_cls_counts_npy, data_distributions, val, _ = graphdataset_read(dataset_name, num_clients, distribution, beta, classes, num_anchors)
     dists = []
     for dataset in datasets:
-        dist = cdist(dataset.x, dataset.x)
+        features = dataset.x[dataset.client_mask]
+        dist = cdist(features,features)
         dists.append(dist)
     D_partial = scipy.linalg.block_diag(*dists)
     
