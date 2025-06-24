@@ -14,8 +14,13 @@ def remove_nodes_for_val(features, adj, labels, idx_train, idx_val, idx_test, nu
     
     num_nodes = features.shape[0]
     all_nodes = torch.arange(num_nodes)
-    remove_nodes = torch.randperm(num_nodes)[:num_nodes_to_remove]
-    
+
+    # Select nodes to remove only from idx_val
+    num_to_remove = min(num_nodes_to_remove, idx_val.shape[0])
+    print(f"Removing {num_to_remove} nodes from validation set.")
+    perm = torch.randperm(idx_val.shape[0])[:num_to_remove]
+    remove_nodes = idx_val[perm]
+
     keep_mask = ~torch.isin(all_nodes, remove_nodes)
     remove_mask = torch.isin(all_nodes, remove_nodes)
 
@@ -57,7 +62,7 @@ def data_loader_NC(args: attridict) -> tuple:
     if not args.use_huggingface:
         # process on the server
         features, adj, labels, idx_train, idx_val, idx_test = NC_load_data(args.dataset)
-        #print(idx_val, features.shape)
+        #print(len(idx_val), len(idx_train), len(idx_test))
         train, val = remove_nodes_for_val(features, adj, labels, idx_train, idx_val, idx_test, args.num_nodes_to_remove)
         features, row, col, edge_attr, labels, idx_train, idx_val, idx_test = train
         class_num = labels.max().item() + 1
