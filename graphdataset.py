@@ -17,7 +17,7 @@ def graphdataset_read(dataset, n_parties, partition, beta, classes, anchors=100)
         traindata_cls_counts_npy = np.array([])
         num_classes = classes
         for data in datasets:
-            y_train = data.y[data.test_mask == 0].numpy()
+            y_train = data.y[data.train_mask].numpy()
             unq, unq_cnt = np.unique(y_train, return_counts=True)
             for i in range(len(unq)):
                 traindata_cls_counts_dict[unq[i]] = unq_cnt[i]
@@ -69,7 +69,7 @@ def graphdataset_read(dataset, n_parties, partition, beta, classes, anchors=100)
         traindata_cls_counts_npy = np.array([])
         num_classes = 7
         for data in datasets:
-            y_train = data.y[data.test_mask == 0].numpy()
+            y_train = data.y[data.train_mask].numpy()
             unq, unq_cnt = np.unique(y_train, return_counts=True)
             for i in range(len(unq)):
                 traindata_cls_counts_dict[i] = unq_cnt[i]
