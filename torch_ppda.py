@@ -1,0 +1,648 @@
+import argparse
+import random
+import time
+import warnings
+from math import log2
+import pycuda.driver as cuda
+import os
+from ugc_f import ugc
+import torch.nn.functional as F
+from torch_geometric.utils import to_dense_adj, dense_to_sparse
+
+import matplotlib.pyplot as plt
+import networkx as nx
+import numpy as np
+import pandas as pd
+import pickle
+import pylab
+import scipy
+import torch
+import torch_geometric
+import cupy as cp
+import cupyx.scipy.spatial.distance as test
+
+from scipy import spatial, sparse as sp
+from scipy.linalg import fractional_matrix_power
+from scipy.spatial.distance import cdist, pdist
+from sklearn.model_selection import train_test_split
+from sklearn.neighbors import kneighbors_graph
+from sklearn.preprocessing import StandardScaler
+from torchvision import datasets, transforms
+from tqdm import tqdm
+
+from graphdataset import store_partition_graph
+
+def update_table(dataset, accuracy, anchors, coarsening_ratio, ifppda=True, path="cora_exp.csv"):
+    row = {"dataset": dataset, '#Anchors': anchors, "accuracy": accuracy, 'PPDA': ifppda, 'r': coarsening_ratio}
+
+    # Check if file exists and is not empty
+    if os.path.exists(path) and os.path.getsize(path) > 0:
+        df = pd.read_csv(path)
+        df = pd.concat([df, pd.DataFrame([row])], ignore_index=True)
+    else:
+        df = pd.DataFrame([row])
+    
+    df.to_csv(path, index=False)
+    print(f"Results saved: {accuracy} acc on {dataset} with {anchors} anchors and coarseni  ng ratio {coarsening_ratio}")
+
+def Hbeta(D=torch.tensor([]), beta=1.0):
+    P = torch.exp(-1 * torch.clone(D) * beta)
+    sumP = sum(P)
+    H = torch.log(sumP) + beta * torch.sum(D * P) / sumP
+    P = P / sumP
+    return H, P
+
+def x2p(X=torch.tensor([]), tol=1e-5, perplexity=30.0):
+    print("Computing pairwise distances...")
+    (n, d) = X.shape
+    sum_X = torch.sum(torch.square(X), 1)
+    D = torch.add(torch.add(-2 * np.dot(X, X.T), sum_X).T, sum_X)
+    # print("distamce matrix", D)
+    P = torch.zeros((n, n))
+    beta = torch.ones((n, 1))
+    logU = torch.log(perplexity)
+
+    # Loop over all datapoints
+    for i in range(n):
+
+        # Print progress
+        if i % 500 == 0:
+            print("Computing P-values for point %d of %d..." % (i, n))
+
+        # Compute the Gaussian kernel and entropy for the current precision
+        betamin = -torch.inf
+        betamax = torch.inf
+        Di = D[i, torch.cat((torch.arange(i), torch.arange(i+1,n)))]
+        (H, thisP) = Hbeta(Di, beta[i])
+
+        # Evaluate whether the perplexity is within tolerance
+        Hdiff = H - logU
+        tries = 0
+        while torch.abs(Hdiff) > tol and tries < 50:
+
+            # If not, increase or decrease precision
+            if Hdiff > 0:
+                betamin = beta[i].copy()
+                if betamax == torch.inf  or betamax == -torch.inf:
+                    beta[i] = beta[i] * 2.
+                else:
+                    beta[i] = (beta[i] + betamax) / 2.
+            else:
+                betamax = beta[i].copy()
+                if betamin == torch.inf or betamin == -torch.inf:
+                    beta[i] = beta[i] / 2.
+                else:
+                    beta[i] = (beta[i] + betamin) / 2.
+
+            # Recompute the values
+            (H, thisP) = Hbeta(Di, beta[i])
+            Hdiff = H - logU
+            tries += 1
+
+        # Set the final row of P
+        P[i, torch.cat((torch.arange(i), torch.arange(i+1,n)))] = thisP
+
+    # Return final P-matrix
+    print("Mean value of sigma: %f" % torch.mean(torch.sqrt(1 / beta)))
+    print("P complete", P, P.shape)
+    return P
+
+def tsne(X=torch.tensor([]), no_dims=2, perplexity=30.0, random_state=None,max_iter=1000, initial_momentum=0.4, final_momentum=0.8, eta=100, min_gain=0.01, early_exag=2):
+
+    # Check inputs
+    if isinstance(no_dims, float):
+        print("Error: array X should have type float.")
+        return -1
+    if round(no_dims) != no_dims:
+        print("Error: number of dimensions should be an integer.")
+        return -1
+
+    (n_tsne, d) = X.shape
+
+    Y = torch.randn(n_tsne, no_dims)
+    dY = torch.zeros([n_tsne, no_dims])
+    iY = torch.zeros([n_tsne, no_dims])
+    gains = torch.ones([n_tsne, no_dims])
+
+    # Compute P-values
+    P = x2p(X, 1e-5, perplexity)
+    P = P + P.T
+    P = P / torch.sum(P)
+    P = P * early_exag								# early exaggeration
+    P = torch.maximum(P, 1e-12)
+
+
+    # Run iterations
+    for iter in range(max_iter):
+        # Compute pairwise affinities
+        sum_Y = torch.sum(torch.square(Y), 1)
+        num = -2. * torch.dot(Y, Y.T)
+        num = 1. / (1. + torch.add(torch.add(num, sum_Y).T, sum_Y))
+        num[range(n), range(n)] = 0.
+        Q = num / torch.sum(num)
+        Q = torch.maximum(Q, torch.tensor(1e-12))
+
+        # Compute gradient
+        PQ = P - Q
+        for i in range(n_tsne):
+            dY[i, :] = torch.sum(torch.tile(PQ[:, i] * num[:, i], (no_dims, 1)).T * (Y[i, :] - Y), 0)
+
+        # Perform the update
+        if iter < 20:
+            momentum = initial_momentum
+        else:
+            momentum = final_momentum
+        gains = (gains + 0.2) * ((dY > 0.) != (iY > 0.)) + \
+                (gains * 0.8) * ((dY > 0.) == (iY > 0.))
+        gains[gains < min_gain] = min_gain
+        iY = momentum * iY - eta * (gains * dY)
+        Y = Y + iY
+        Y = Y - torch.tile(torch.mean(Y, 0), (n_tsne, 1))
+
+        # Compute current value of cost function
+        if (iter + 1) % 10 == 0:
+            C = torch.sum(P * torch.log(P / Q))
+            print("Iteration %d: error is %f" % (iter + 1, C))
+
+        # Stop lying about P-values
+        if iter == 100:
+            P = P / early_exag
+
+    # Return solution
+    return Y
+
+
+def dist_approx(*client_data, X_a, n):
+    num_clients = len(client_data)  # Number of clients
+    print("num_clients", num_clients)
+    n_clients = [data.shape[0] for data in client_data]  # Number of samples in each client's data
+    print("n_clients", n_clients)
+
+    DA = torch.cdist(X_a, X_a)  # Anchor to anchor distance
+    D = torch.zeros((sum(n_clients) + X_a.shape[0], sum(n_clients) + X_a.shape[0]))  # Initialize distance matrix
+
+    print('hi')
+    # Compute distances between non-anchor data of clients
+    for i, C_na_data in enumerate(client_data):
+        for j, C_na_data_other in enumerate(client_data):
+            if i == j:
+                D_offset = sum(n_clients[:i])
+                D[D_offset:D_offset + n_clients[i], D_offset:D_offset + n_clients[i]] = torch.cdist(C_na_data, C_na_data)
+    # Compute distances from each client to anchors
+    DNA = [torch.cdist(C_na_data, X_a) for C_na_data in client_data]
+
+    for i in range(num_clients):
+        D_offset = sum(n_clients[:i])
+        D[D_offset:D_offset + n_clients[i], -X_a.shape[0]:] = DNA[i]
+        D[-X_a.shape[0]:, D_offset:D_offset + n_clients[i]] = DNA[i].T
+    # Block construction for the full distance matrix
+    D[-X_a.shape[0]:, -X_a.shape[0]:] = DA  # Anchor distances to anchors
+    D = (D + D.T) / 2
+    W_1 = torch.zeros(D.shape)
+    start_idx = 0
+    for i in range(num_clients):
+        end_idx = start_idx + n_clients[i]
+        W_1[start_idx:end_idx, start_idx:end_idx] = 1
+        W_1[start_idx:end_idx, -X_a.shape[0]:] = 1
+        W_1[-X_a.shape[0]:, start_idx:end_idx] = 1
+        start_idx = end_idx
+    W_1[-X_a.shape[0]:, -X_a.shape[0]:] = 1
+    # print("W_1 Matrix:")
+
+    diag_vals = torch.matmul(W_1, torch.ones(W_1.shape[0], device=W_1.device))
+    diag_matrix = torch.diag(diag_vals)
+    V = diag_matrix - W_1
+
+    V1 = V[:sum(n_clients), :sum(n_clients)]
+    V2 = V[:sum(n_clients), sum(n_clients):]
+
+    return D, V, V1, V2, W_1, DA, *DNA
+
+def mat(D , V1 , V2 , W_1 , DA , X_a , n_list , n ,d , Zu_samples):
+    Zu = []
+    start_idx = 0
+    for n_i in n_list:
+        Zu_i = Zu_samples[start_idx:start_idx + n_i, :]
+        Zu.append(Zu_i)
+        start_idx += n_i
+
+    #print(len(X_a[0]))
+    #print(Zu)
+    #Zu = Zu_samples[:n,:]
+
+
+    DNA_new = []
+    #DNA_new = cdist(Zu , X_a , metric = 'euclidean')
+    #X_a = tsne(X_a)
+    for i in range(len(n_list)):
+        client_distances = torch.cdist(Zu[i], X_a)
+        DNA_new.append(client_distances)
+    
+    V1_inv = torch.linalg.pinv(V1)
+    W_new = W_1 * D
+
+    Dnew_list = [torch.cdist(Zu[i], Zu[i]) for i in range(len(n_list))]
+
+    zero_blocks = []
+    for i in range(len(n_list)):
+        for j in range(len(n_list)):
+            if i != j:
+                zero_blocks.append(torch.zeros([n_list[i], n_list[j]]))  # Shape (n_i, n_j)
+
+    D_new = []
+    for i in range(len(n_list)):
+        row = []
+        for j in range(len(n_list)):
+            if i == j:
+                row.append(Dnew_list[i])
+            else:
+                row.append(zero_blocks.pop(0))
+        row.append(DNA_new[i])
+        D_new.append(row)
+
+    anchor_row = []
+    for i in range(len(n_list)):
+        anchor_row.append(DNA_new[i].T)
+    anchor_row.append(DA)
+
+    D_new.append(anchor_row)
+
+    try:
+        D_new = torch.cat([torch.cat(block_row, dim=1) for block_row in D_new], dim=0)
+        #print("\nBlock matrix created successfully.")
+    except ValueError as e:
+        print("\nError creating block matrix:", e)
+
+    return D_new
+
+def MDS_X(D, V1, V2, W_1, DA, X_a, n_list, n, d, mat_fn):
+    device = D.device  # keep everything on the same device
+
+    # Compute L_D_inv
+    D_inv = torch.zeros_like(D)
+    D_inv[D != 0] = 1.0 / D[D != 0]
+    row_sums = torch.sum(D_inv, dim=1)
+    diag_matrix = torch.diag(row_sums)
+    L_D_inv = diag_matrix - D_inv
+
+    # Sampling
+    torch.manual_seed(50)
+    temp = torch.linalg.pinv(L_D_inv)
+    distr = MultivariateNormal(torch.zeros(n + X_a.shape[0], device=device), temp)
+    Zu_samples = distr.sample((d,)).T
+    del temp
+
+    # Split Zu_samples by client
+    Zu = []
+    start_idx = 0
+    for n_i in n_list:
+        Zu_i = Zu_samples[start_idx:start_idx + n_i, :]
+        Zu.append(Zu_i)
+        start_idx += n_i
+
+    # Distance from each client's points to anchors
+    DNA_new = [torch.cdist(Zu[i], X_a) for i in range(len(n_list))]
+
+    epsilon = 1e-3
+    epochs = 1000
+    loss = []
+
+    V1_inv = torch.linalg.pinv(V1)
+    W_new = W_1 * D  # torch.multiply equivalent
+
+    # Intra-client distances
+    Dnew_list = [torch.cdist(Zu[i], Zu[i]) for i in range(len(n_list))]
+
+    # Build zero blocks
+    zero_blocks = []
+    for i in range(len(n_list)):
+        for j in range(len(n_list)):
+            if i != j:
+                zero_blocks.append(torch.zeros((n_list[i], n_list[j]), device=device))
+
+    # Build block matrix D_new
+    D_new = []
+    for i in range(len(n_list)):
+        row = []
+        for j in range(len(n_list)):
+            if i == j:
+                row.append(Dnew_list[i])
+            else:
+                row.append(zero_blocks.pop(0))
+        row.append(DNA_new[i])
+        D_new.append(row)
+
+    anchor_row = [DNA_new[i].T for i in range(len(n_list))]
+    anchor_row.append(DA)
+
+    D_new.append(anchor_row)
+
+    # Block concatenate in PyTorch
+    D_new = torch.cat([torch.cat(block_row, dim=1) for block_row in D_new], dim=0)
+    print("\nBlock matrix created successfully.")
+
+    Zu_combined = torch.cat(Zu, dim=0)
+    n_total = sum(n_list)
+    n_anchors = X_a.shape[0]
+
+    for t in tqdm(range(epochs)):
+        # W_final = W_new / D_new  (safe division)
+        W_final = torch.zeros_like(W_new)
+        mask = D_new != 0
+        W_final[mask] = W_new[mask] / D_new[mask]
+
+        B_Z = torch.diag(torch.matmul(W_final, torch.ones(W_final.shape[0], device=device))) - W_final
+        BZ1 = B_Z[:n_total, :n_total]
+        BZ2 = B_Z[:n_total, n_total:n_total + n_anchors]
+
+        term1 = torch.matmul(BZ1, Zu_combined)
+        term2_temp = BZ2 - V2
+        term2 = torch.matmul(term2_temp, X_a)
+        X_final = torch.matmul(V1_inv, term1 + term2)
+
+        # Call user-provided mat function (must return torch tensor)
+        D_new = mat_fn(D, V1, V2, W_1, DA, X_a, n_list, n, d, X_final)
+
+        # Recompute weights
+        D_inv_new = torch.zeros_like(D_new)
+        mask = D_new != 0
+        D_inv_new[mask] = 1.0 / D_new[mask]
+
+        # Get upper triangle indices
+        triu_idx = torch.triu_indices(D_inv.shape[0], D_inv.shape[1], offset=1)
+        W_upper_triag = D_inv_new[triu_idx[0], triu_idx[1]]
+
+        # Stress computation
+        C = (D - D_new) ** 2
+        D_upper_triag = C[triu_idx[0], triu_idx[1]]
+        stress = torch.dot(W_upper_triag, D_upper_triag)
+        loss.append(stress.item())
+
+        Zu_combined = X_final
+
+        if t % 10 == 0:
+            print(stress.item())
+        if t != 0 and abs(loss[t] - loss[t - 1]) < epsilon:
+            break
+
+    return X_final, loss
+
+
+def dist_error(X_na, X_final):
+    # Distances
+    D_true = torch.cdist(X_na, X_na)
+    D_esti = torch.cdist(X_final, X_final)
+
+    # Norm error
+    Error = torch.norm(D_true - D_esti, p='fro') / torch.norm(D_true, p='fro')
+
+    # "Squareform" equivalent (flatten upper triangle without diagonal)
+    triu_idx = torch.triu_indices(D_true.shape[0], D_true.shape[1], offset=1)
+    z_true = D_true[triu_idx[0], triu_idx[1]]
+    z_esti = D_esti[triu_idx[0], triu_idx[1]]
+
+    return Error.item(), D_true, D_esti, z_true, z_esti
+
+def check_score(D_true, D_approx,k):
+      f_scores = []
+      for i in range(D_true.shape[0]):
+        list1 =  torch.argsort(D_true[i])
+        list2 =  torch.argsort(D_approx[i])
+        newlist1 = list1[1:k]
+        newlist2 = list2[1:k]
+        count = 0
+        for p in range(k-1):
+            if(newlist1[p] == newlist2).any():
+              count += 1
+
+        f_score = 2 * count / (2 * count + (k - 1 - count))
+        f_scores.append(f_score)
+
+      avg_f_score = sum(f_scores) / len(f_scores)
+      return avg_f_score
+
+if __name__ == "__main__":
+    torch.cuda.empty_cache()
+    # for i in range(cuda.Device.count()):
+    #     dev = cuda.Device(i)
+    #     ctx = dev.make_context()
+    #     free, total = cuda.mem_get_info()
+    #     print(f"Device {i}: {dev.name()} | Free: {free // (1024**2)} MB / Total: {total // (1024**2)} MB")
+    #     ctx.pop()
+    
+    # cp.cuda.runtime.setDevice(1)
+
+    parser = argparse.ArgumentParser(description='Run t-SNE with random search hyperparameters.')
+    parser.add_argument('--max_iter', type=int, default=1000, help='Maximum number of iterations.')
+    parser.add_argument('--initial_momentum', type=float, default=0.4, help='Initial momentum.')
+    parser.add_argument('--final_momentum', type=float, default=0.8, help='Final momentum.')
+    parser.add_argument('--eta', type=float, default=100, help='Learning rate (eta).')
+    parser.add_argument('--min_gain', type=float, default=0.01, help='Minimum gain.')
+    parser.add_argument('--early_exag', type=int, default=2, help='Early exaggeration.')
+    parser.add_argument('--output_directory', type=str, default='./data/output/' ,help='Output filename for the visualization')
+    parser.add_argument('--dataset_name', type=str, default='cora',help='Name of the dataset to load (BRCA or MNIST).')
+    parser.add_argument('--num_clients', type=int, default=10, help='Number of clients to use for the dataset.')
+    parser.add_argument('--data_directory', type=str, default='./data/cora/', help='Directory where dataset files are located.')
+    parser.add_argument('--r', type=float, default=0.1, help='Coarsening ratio')
+    parser.add_argument('--nAnchors', type=int, required=True, help="Number of anchors")
+    parser.add_argument('--ifugc', type=int, default=1)
+
+    parser.add_argument('--gpu', type=str, default="1")
+    parser.add_argument('--model', type=str, default='gcn', help='neural network used in training')
+    parser.add_argument('--dataset', type=str, default='cora', help='dataset used for training')
+    parser.add_argument('--partition', type=str, default='noniid', help='the data partitioning strategy')
+    parser.add_argument('--num_local_iterations', type=int, default=200, help='number of local iterations')
+    parser.add_argument('--batch_size', type=int, default=64, help='input batch size for training (default: 64)')
+    parser.add_argument('--lr', type=float, default=0.01, help='learning rate (default: 0.1)')
+    parser.add_argument('--epochs', type=int, default=10, help='number of local epochs')
+    parser.add_argument('--n_parties', type=int, default=10, help='number of workers in a distributed cluster')
+    parser.add_argument('--comm_round', type=int, default=50, help='number of maximum communication roun')
+    parser.add_argument('--init_seed', type=int, default=0, help="Random seed")
+    parser.add_argument('--dropout_p', type=float, required=False, default=0.0, help="Dropout probability. Default=0.0")
+    parser.add_argument('--datadir', type=str, required=False, default="./data/", help="Data directory")
+    parser.add_argument('--beta', type=float, default=200,
+                        help='The parameter for the dirichlet distribution for data partitioning')
+    parser.add_argument('--skew_class', type=int, default = 2, help='The parameter for the noniid-skew for data partitioning')
+    parser.add_argument('--reg', type=float, default=1e-5, help="L2 regularization strength")
+    parser.add_argument('--log_file_name', type=str, default=None, help='The log file name')
+    parser.add_argument('--optimizer', type=str, default='sgd', help='the optimizer')
+    parser.add_argument('--sample_fraction', type=float, default=1.0, help='how many clients are sampled in each round')
+    parser.add_argument('--concen_loss', type=str, default='uniform_norm', choices=['norm', 'uniform_norm'], help='How to measure the modle difference')
+    parser.add_argument('--weight_norm', type=str, default='relu', choices=['sum', 'softmax', 'abs', 'relu', 'sigmoid'], help='How to measure the model difference')
+    parser.add_argument('--difference_measure', type=str, default='all', help='How to measure the model difference')
+    
+    parser.add_argument('--load_graph_path', type=str, default='./data/cora/', help='The path to load the graph')
+    parser.add_argument('--alpha', type=float, default=0.8, help='Hyper-parameter to avoid concentration')
+    parser.add_argument('--lam', type=float, default=0.01, help="Hyper-parameter in the objective")
+    parser.add_argument('--ppda', type=bool, default=True, help='Whether to use PPDA')
+    # attack
+    parser.add_argument('--attack_type', type=str, default="inv_grad")
+    parser.add_argument('--attack_ratio', type=float, default=0.0)
+
+    args = parser.parse_args()
+
+    print(args)
+    max_iter = args.max_iter
+    initial_momentum = args.initial_momentum
+    final_momentum = args.final_momentum
+    eta = args.eta
+    min_gain = args.min_gain
+    early_exag = args.early_exag
+    dataset_name = args.dataset_name
+    data_directory = args.data_directory
+    num_clients = args.num_clients
+    output_directory = args.output_directory
+    coarsening_ratio = args.r
+
+    # Set default output filename based on the dataset name if not provided
+    #if args.output is None:
+    #    args.output = f"{dataset_name}_tsne_visualization.png"
+
+    #train_data, test_data = load_data(dataset_name=dataset_name, num_clients=num_clients, test_size=0.2, data_dir=data_directory)
+
+    
+    # Partition the data
+    D_partial, train_data, traindata_cls_counts_npy, data_distributions, test_data = store_partition_graph(dataset_name, 0.5, 'noniid', num_clients, "./data/", args.nAnchors)
+    # D_partial, train_data, traindata_cls_counts_npy, data_distributions, test_data = (np.load('./data/cora/D_partial.npy'),
+    #                                                                                    np.load('./data/cora/datasets.pkl', allow_pickle=True),
+    #                                                                                    np.load('./data/cora/traindata_cls_counts_npy.npy'),
+    #                                                                                    np.load('./data/cora/data_distributions.npy'),
+    #                                                                                    torch.load('./data/cora/val.pt', weights_only=False))
+    # file = open(data_directory + f"datasets.pkl",'rb')
+    # train_data = pickle.load(file)
+    # file.close()
+    # test_data = torch.load(args.data_directory + f"val.pt", weights_only=False)
+    
+    print(f'Dataset Name: {dataset_name}\n Coarsening with UGC: {args.ifugc} \n Number for clients: {num_clients} \n Number of Anchors: {args.nAnchors}')   
+ 
+    train_features = []
+    train_labels = []
+    test_features = []
+    test_labels = []
+
+    feat = 1e5
+    ## UGC
+    if args.ifugc:
+        for i, data in enumerate(train_data):
+            data.train_mask = ~data.test_mask
+            print(f'Before coarsening:: Train: {data.train_mask.sum()}, Test: {data.test_mask.sum()}')
+            num_nodes = data.x.shape[0]
+            if num_nodes < 100: continue
+            C, zero_list = ugc(data, coarsening_ratio, i)
+            train_data[i].x = C.T @ train_data[i].x
+            # myX = torch.rand(train_data[i].x.shape[0], int(feat))
+            # myX[:,:train_data[i].x.shape[1]] = train_data[i].x
+            # train_data[i].x = myX
+            y_oh = F.one_hot(data.y)
+            y_oh[~(train_data[i].train_mask)] = torch.zeros(1, y_oh.shape[1], dtype=y_oh.dtype)
+            newY = torch.argmax(C.T.to(y_oh.dtype) @ y_oh, dim=1).to(data.y.dtype)
+            train_data[i].y = newY
+            train_data[i].test_mask = zero_list
+            train_data[i].train_mask = ~zero_list
+            train_data[i].edge_index = dense_to_sparse(C.T @ to_dense_adj(data.edge_index, max_num_nodes=num_nodes)[0] @ C)[0].to(torch.int64)
+            print(f'After coarsening:: Train: {data.train_mask.sum()}, Test: {data.test_mask.sum()}')
+    print(train_data)
+
+    
+    # myX = torch.rand(test_data.x.shape[0], int(feat))
+    # myX[:, :test_data.x.shape[1]] = test_data.x
+    # test_data.x = myX
+    print(test_data.test_mask.sum())
+    # exit(1)
+
+
+    n = 0
+    l = [0]
+    for dataset in train_data:
+        n += dataset.x.shape[0]
+        l.append(n)
+    C = np.zeros((n, len(train_data)))
+    print(n)
+    for i in range(len(l) - 1):
+        C[l[i]:l[i+1], i] = 1
+    
+    C_new = C
+
+
+    for i in range(10):
+        train_features.append(train_data[i].x.numpy())
+        train_labels.append(train_data[i].y.numpy())
+
+    test_features.append(test_data.x.numpy())
+    test_labels.append(test_data.y.numpy())
+
+    labels = np.concatenate([train_labels[i] for i in range(len(train_features))])
+
+    X_a = test_data.x.numpy()
+    X_na = np.concatenate([train_features[i] for i in range(len(train_features))], axis=0)
+    
+    print(X_a.shape, X_na.shape)
+
+    m = X_a.shape[0]
+    n = X_na.shape[0]
+    d = X_a.shape[1]
+
+    n_sizes = [train_features[i].shape[0] for i in range(len(train_features))]
+    for i in range(len(n_sizes)):
+        globals()[f'n{i + 1}'] = n_sizes[i]
+
+    print(f"Number of anchors Samples (m): {m}")
+    print(f"Number of non anchors Samples (n): {n}")
+    print(f"Number of Features (d): {d}")
+
+    client_data = [torch.from_numpy(train_features[i].astype('float')) for i in range(len(train_features))]
+
+    
+    D, V, V1, V2, W_1, DA, *DNA = dist_approx(*client_data, X_a=torch.from_numpy(X_a.astype('float')), n=n)
+
+    print('dist_approx done')
+    # Perform MDS
+    X_a=X_a.astype('float')
+    #profiler = LineProfiler()
+    #profiler.add_function(MDS_X)
+    #profiler.enable()
+    time1 = time.time()
+    X_final, loss = MDS_X(D, V1, V2, W_1, DA, X_a, n_sizes, n, d)
+    time1f = time.time()
+    print(f"Time taken on {args.dataset_name}: {time1f-time1} secs")
+    #profiler.disable()
+    os.makedirs(output_directory, exist_ok=True)
+
+    # np.save(output_directory + f"X_final_{dataset_name}_{args.nAnchors}.npy", X_final)
+    print("Calculating the distance error between X_na and X_final of shapes", X_na.shape, X_final.shape, "X_na looks like", X_na, "X_final looks like", X_final)
+    error, D_true, D_esti, z_true, z_esti = dist_error(torch.from_numpy(X_na.astype('float')), X_final)
+    # np.save(output_directory + f"D_esti_{args.nAnchors}" + dataset_name + "_.npy", D_esti)
+    print("Error in distance approximation: ", error)
+    fscore = check_score(D_true, D_esti, 11)
+    print("F-score: ", fscore)
+
+    # Run t-SNE
+    # Y = tsne(X_final, 2, max_iter=max_iter, initial_momentum=initial_momentum, final_momentum=final_momentum, eta=eta, min_gain=min_gain, early_exag=early_exag)
+    # print("Y", Y)
+
+    # Scatter plot
+    pylab.scatter(X_final[:, 0], X_final[:, 1], 20, labels)
+    pylab.savefig(output_directory + "vis.png")  # Save to the output filename
+    pylab.show()
+
+
+    ## Now testing for accuracy
+    import torch
+    import torch.optim as optim
+
+    from pfedgraph_gcosine.config import get_args
+    from torch_geometric.utils import subgraph
+    from pfedgraph_gcosine.utils import aggregation_by_graph, update_graph_matrix_neighbor, compute_acc, compute_local_test_accuracy, gen_graph_matrix
+    from prepare_data import get_dataloader
+    from attack import *
+    from model import coragcn, niidgcn
+
+    from pfedgraph_gcosine_ import test_accuracy_pfed
+    
+    time2 = time.time()
+    reqs = {'datasets': train_data, 'traindata_cls_counts_npy': traindata_cls_counts_npy, 'data_distributions': data_distributions, 'val_graph': test_data}
+    myacc = test_accuracy_pfed(C_new, D_esti, args, reqs)
+    time2f = time.time()
+    print(time2f-time2)
+    print('The accuracy on dataset with coarsening ratio is myacc with time taken mytime')
+    update_table(dataset_name, myacc*100, args.nAnchors, coarsening_ratio)

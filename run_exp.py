@@ -1,0 +1,57 @@
+import argparse
+from pfedgraph_gcosine import PFGDataset
+from pfedgraph_gcosine_ import *
+if __name__ == '__main__':
+
+    parser = argparse.ArgumentParser(description='Run t-SNE with random search hyperparameters.')
+    parser.add_argument('--max_iter', type=int, default=1000, help='Maximum number of iterations.')
+    parser.add_argument('--initial_momentum', type=float, default=0.4, help='Initial momentum.')
+    parser.add_argument('--final_momentum', type=float, default=0.8, help='Final momentum.')
+    parser.add_argument('--eta', type=float, default=100, help='Learning rate (eta).')
+    parser.add_argument('--min_gain', type=float, default=0.01, help='Minimum gain.')
+    parser.add_argument('--early_exag', type=int, default=2, help='Early exaggeration.')
+    parser.add_argument('--output_directory', type=str, default='./data/output/' ,help='Output filename for the visualization')
+    parser.add_argument('--dataset_name', type=str, default='cora',help='Name of the dataset to load (BRCA or MNIST).')
+    parser.add_argument('--num_clients', type=int, default=10, help='Number of clients to use for the dataset.')
+    parser.add_argument('--data_directory', type=str, default='./data/cora/', help='Directory where dataset files are located.')
+    parser.add_argument('--r', type=float, default=0.1, help='Coarsening ratio')
+    parser.add_argument('--nAnchors', type=int, required=True, help="Number of anchors")
+    parser.add_argument('--ifugc', type=int, default=1)
+    parser.add_argument('--gpu', type=str, default="1")
+    parser.add_argument('--model', type=str, default='gcn', help='neural network used in training')
+    parser.add_argument('--dataset', type=str, default='cora', help='dataset used for training')
+    parser.add_argument('--partition', type=str, default='noniid', help='the data partitioning strategy')
+    parser.add_argument('--num_local_iterations', type=int, default=200, help='number of local iterations')
+    parser.add_argument('--batch_size', type=int, default=64, help='input batch size for training (default: 64)')
+    parser.add_argument('--lr', type=float, default=0.01, help='learning rate (default: 0.1)')
+    parser.add_argument('--epochs', type=int, default=10, help='number of local epochs')
+    parser.add_argument('--n_parties', type=int, default=10, help='number of workers in a distributed cluster')
+    parser.add_argument('--comm_round', type=int, default=50, help='number of maximum communication roun')
+    parser.add_argument('--init_seed', type=int, default=0, help="Random seed")
+    parser.add_argument('--dropout_p', type=float, required=False, default=0.0, help="Dropout probability. Default=0.0")
+    parser.add_argument('--datadir', type=str, required=False, default="./data/", help="Data directory")
+    parser.add_argument('--beta', type=float, default=200,
+                        help='The parameter for the dirichlet distribution for data partitioning')
+    parser.add_argument('--skew_class', type=int, default = 2, help='The parameter for the noniid-skew for data partitioning')
+    parser.add_argument('--reg', type=float, default=1e-5, help="L2 regularization strength")
+    parser.add_argument('--log_file_name', type=str, default=None, help='The log file name')
+    parser.add_argument('--optimizer', type=str, default='sgd', help='the optimizer')
+    parser.add_argument('--sample_fraction', type=float, default=1.0, help='how many clients are sampled in each round')
+    parser.add_argument('--concen_loss', type=str, default='uniform_norm', choices=['norm', 'uniform_norm'], help='How to measure the modle difference')
+    parser.add_argument('--weight_norm', type=str, default='relu', choices=['sum', 'softmax', 'abs', 'relu', 'sigmoid'], help='How to measure the model difference')
+    parser.add_argument('--difference_measure', type=str, default='all', help='How to measure the model difference')
+    parser.add_argument('--load_graph_path', type=str, default='./data/cora/', help='The path to load the graph')
+    parser.add_argument('--alpha', type=float, default=0.8, help='Hyper-parameter to avoid concentration')
+    parser.add_argument('--lam', type=float, default=0.01, help="Hyper-parameter in the objective")
+    parser.add_argument('--ppda', type=bool, default=True, help='Whether to use PPDA')
+    # attack
+    parser.add_argument('--attack_type', type=str, default="inv_grad")
+    parser.add_argument('--attack_ratio', type=float, default=0.0)
+
+    args = parser.parse_args()
+
+    data = PFGDataset(args)
+    graph_matrix = generate_colab_matrix(data.local_data, data.get_anchors(), args.output_directory)
+    data.set_graph_matrix(graph_matrix)
+    
+    test_accuracy_pfed()

@@ -9,20 +9,36 @@ import torch.optim as optim
 
 from pfedgraph_gcosine.config import get_args
 from torch_geometric.utils import subgraph
-from pfedgraph_gcosine.utils import aggregation_by_graph, update_graph_matrix_neighbor, compute_acc, compute_local_test_accuracy, gen_graph_matrix
-from prepare_data import get_dataloader
+from pfedgraph_gcosine.utils import aggregation_by_graph, update_graph_matrix_neighbor, compute_acc, compute_local_test_accuracy, gen_graph_matrix, compute_local_val_accuracy
+from prepare_data import graphdataset_read
 from attack import *
 from model import coragcn, niidgcn
+from ppda.ppda import run_ppda
+from ppda.utils import gen_graph_matrix, prep_ppda
+from pfedgraph_gcosine import PFGDataset
+
+def generate_colab_matrix(client_pyg_datasets, anchor_datapoints, output_dir):
+    X_a, X_na, client_data = prep_ppda(client_pyg_datasets, anchor_datapoints)
+    D_esti, X_final, loss = run_ppda(client_data, X_a, X_na, output_dir)
+    n = 0
+    l = [0]
+    for dataset in client_pyg_datasets:
+        n += dataset.x.shape[0]
+        l.append(n)
+    C = np.zeros((n, len(client_pyg_datasets)))
+    #print(n)
+    for i in range(len(l) - 1):
+        C[l[i]:l[i+1], i] = 1
+    return gen_graph_matrix(D_esti, C)      
 
 
-def local_train_pfedgraph(args, round, nets_this_round, cluster_models, datasets, data_distributions, val, best_val_acc_list, best_test_acc_list, benign_client_list):
+def local_train_pfedgraph(args, round, nets_this_round, cluster_models, datasets, data_distributions, best_val_acc_list, best_test_acc_list, benign_client_list):
     
     for net_id, net in nets_this_round.items():
         
         data_distribution = data_distributions[net_id]
 
         if net_id in benign_client_list:
-            val_acc = compute_acc(net, val)
             personalized_test_acc, generalized_test_acc = compute_local_test_accuracy(net, datasets[net_id], data_distribution)
 
             if val_acc > best_val_acc_list[net_id]:
@@ -68,7 +84,7 @@ def local_train_pfedgraph(args, round, nets_this_round, cluster_models, datasets
             optimizer.step()
         
         if net_id in benign_client_list:
-            val_acc = compute_acc(net, val)
+            val_acc = compute_local_val_accuracy(net, datasets[net_id], data_distribution)
             personalized_test_acc, generalized_test_acc = compute_local_test_accuracy(net, datasets[net_id], data_distribution)
 
             if val_acc > best_val_acc_list[net_id]:
@@ -79,7 +95,7 @@ def local_train_pfedgraph(args, round, nets_this_round, cluster_models, datasets
     return np.array(best_test_acc_list)[np.array(benign_client_list)].mean()
 
 
-def test_accuracy_pfed(C_dir, D_dir, myargs, reqs):
+def test_accuracy_pfed(myargs):
     cfg = get_args(myargs)
     args = myargs
     print(args)
@@ -104,7 +120,7 @@ def test_accuracy_pfed(C_dir, D_dir, myargs, reqs):
     benign_client_list.sort()
     print(f'>> -------- Benign clients: {benign_client_list} --------')
 
-    datasets, traindata_cls_counts, data_distributions, val = get_dataloader(args,cfg, reqs)
+    datasets, graph_matrix, traindata_cls_counts, data_distributions = graphdataset_read(args)
     if args.dataset in ('cora', 'pubmed', 'citeseer'):
         model = coragcn
     elif args.dataset == 'niid':
@@ -121,20 +137,14 @@ def test_accuracy_pfed(C_dir, D_dir, myargs, reqs):
         best_val_acc_list.append(0)
         best_test_acc_list.append(0)
 
-    graph_matrix = torch.ones(len(local_models), len(local_models)) / (len(local_models)-1)                 # Collaboration Graph
-    graph_matrix[range(len(local_models)), range(len(local_models))] = 0
+    #graph_matrix = torch.ones(len(local_models), len(local_models)) / (len(local_models)-1)                 # Collaboration Graph
+    #graph_matrix[range(len(local_models)), range(len(local_models))] = 0
 
     for net in local_models:
         net.load_state_dict(global_parameters)
 
         
     cluster_model_vectors = {}
-
-    if args.ppda:
-        distance_matrix = D_dir
-        assignement_matrix = C_dir
-        print(C_dir.shape)
-        graph_matrix = gen_graph_matrix(distance_matrix, assignement_matrix)
 
     for round in range(cfg["comm_round"]):
         party_list_this_round = party_list_rounds[round]
@@ -143,13 +153,13 @@ def test_accuracy_pfed(C_dir, D_dir, myargs, reqs):
         nets_this_round = {k: local_models[k] for k in party_list_this_round}
         nets_param_start = {k: copy.deepcopy(local_models[k]) for k in party_list_this_round}
 
-        mean_personalized_acc = local_train_pfedgraph(args, round, nets_this_round, cluster_model_vectors, datasets, data_distributions, val, best_val_acc_list, best_test_acc_list, benign_client_list)
+        mean_personalized_acc = local_train_pfedgraph(args, round, nets_this_round, cluster_model_vectors, datasets, data_distributions, best_val_acc_list, best_test_acc_list, benign_client_list)
     
         total_data_points = sum([datasets[k].x.shape[0] for k in party_list_this_round])
 
         fed_avg_freqs = {k: datasets[k].x.shape[0] / total_data_points for k in party_list_this_round}
 
-        manipulate_gradient(args, None, nets_this_round, benign_client_list, nets_param_start)
+        #manipulate_gradient(args, None, nets_this_round, benign_client_list, nets_param_start)
         
         if (not args.ppda) :
             graph_matrix = update_graph_matrix_neighbor(graph_matrix, nets_this_round, global_parameters, dw, fed_avg_freqs, args.alpha, args.difference_measure)   # Graph Matrix is not normalized yet
